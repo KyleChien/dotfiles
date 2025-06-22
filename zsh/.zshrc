@@ -19,6 +19,11 @@ fi
 unset __conda_setup
 # <<< conda initialize <<<
 
+# git 
+alias gs='git status'
+alias gb='git branch'
+alias gl='git log --oneline --graph --all'
+
 # oh-my-posh
 eval "$(oh-my-posh init zsh --config ~/.config/OhMyPosh/catppuccin_mocha.omp.json)"
 

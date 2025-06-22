@@ -17,10 +17,10 @@ keymap.set({ "n", "x" }, "k", "v:count == 0 ? 'gk' : 'k'", { desc = "Up", expr =
 keymap.set({ "n", "x" }, "<Up>", "v:count == 0 ? 'gk' : 'k'", { desc = "Up", expr = true, silent = true })
 
 -- Move to window using the <ctrl> hjkl keys
-keymap.set("n", "<C-h>", "<C-w>h", { desc = "Go to Left Window", remap = true })
-keymap.set("n", "<C-j>", "<C-w>j", { desc = "Go to Lower Window", remap = true })
-keymap.set("n", "<C-k>", "<C-w>k", { desc = "Go to Upper Window", remap = true })
-keymap.set("n", "<C-l>", "<C-w>l", { desc = "Go to Right Window", remap = true })
+keymap.set("n", "<C-h>", "<C-w>h", { desc = "Go to Left Window", noremap = true })
+keymap.set("n", "<C-j>", "<C-w>j", { desc = "Go to Lower Window", noremap = true })
+keymap.set("n", "<C-k>", "<C-w>k", { desc = "Go to Upper Window", noremap = true })
+keymap.set("n", "<C-l>", "<C-w>l", { desc = "Go to Right Window", noremap = true })
 
 -- Resize window using <ctrl> arrow keys
 keymap.set("n", "_", "<cmd>resize -2<cr>", { desc = "Decrease Window Height" })
@@ -51,6 +51,12 @@ keymap.set("v", ">", ">gv")
 -- Select all
 keymap.set("n", "<C-a>", "gg<S-v>G", { noremap = true, silent = true })
 
+-- In normal mode: save the file
+keymap.set("n", "<C-s>", ":w<CR>", { noremap = true, silent = true })
+
+-- In insert mode: exit insert mode, save, then return to insert mode
+keymap.set("i", "<C-s>", "<Esc>:w<CR>i", { noremap = true, silent = true })
+
 -- Move to start/end of line
 keymap.set({ "n", "x", "o" }, "H", "^", { noremap = true, silent = true })
 keymap.set({ "n", "x", "o" }, "L", "g_", { noremap = true, silent = true })
@@ -73,3 +79,6 @@ keymap.set({'n', 'v'}, '<C-p>', '{', { desc = 'Next paragraph' })
 
 -- lsp
 keymap.set("n", "<leader>fm", function() vim.lsp.buf.format() end, { desc = "Lsp format" })
+
+-- disable substitude
+keymap.set({ "n", "v" }, "s", "<Nop>", { noremap = true, silent = true })
