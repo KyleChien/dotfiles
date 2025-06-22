@@ -1,8 +1,10 @@
 return {
   "nvim-treesitter/nvim-treesitter",
   build = ":TSUpdate",
+  event = { "VeryLazy" },
   opts = {
-    highlight = { enable = true },
+    highlight = { enable = true, additional_vim_regex_highlighting = false, },
+    auto_install = true,
     indent = { enable = true },
     ensure_installed = {
       "bash",
@@ -48,5 +50,8 @@ return {
         goto_previous_end = { ["[F"] = "@function.outer", ["[C"] = "@class.outer", ["[A"] = "@parameter.inner" },
       },
     },
-  }
+  },
+  config = function(_, opts)
+    require("nvim-treesitter.configs").setup(opts)
+  end
 }
