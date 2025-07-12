@@ -41,3 +41,9 @@ opt.colorcolumn = "100"
 opt.fillchars = {
   eob = " ", -- replaces "~" marks with spaces
 }
+
+-- Fold documents
+opt.foldmethod = "expr"                          -- Use costumed method for folding document
+opt.foldexpr = "v:lua.vim.treesitter.foldexpr()" -- Set treesitter as foldmethod
+opt.foldlevel = 99                               -- Default fold all content for view
+opt.foldtext = ""                                -- Show text after foldmethod

@@ -47,7 +47,17 @@ return {
     -- when the Rust fuzzy matcher is not available, by using `implementation = "prefer_rust"`
     --
     -- See the fuzzy documentation for more information
-    fuzzy = { implementation = "prefer_rust_with_warning" }
+    fuzzy = {
+      -- Controls which implementation to use for the fuzzy matcher.
+      --
+      -- 'prefer_rust_with_warning' (Recommended) If available, use the Rust implementation, automatically downloading prebuilt binaries on supported systems. Fallback to the Lua implementation when not available, emitting a warning message.
+      -- 'prefer_rust' If available, use the Rust implementation, automatically downloading prebuilt binaries on supported systems. Fallback to the Lua implementation when not available.
+      -- 'rust' Always use the Rust implementation, automatically downloading prebuilt binaries on supported systems. Error if not available.
+      -- 'lua' Always use the Lua implementation, doesn't download any prebuilt binaries
+      --
+      -- See the prebuilt_binaries section for controlling the download behavior
+      implementation = 'lua',
+    }
   },
   opts_extend = { "sources.default" }
 }

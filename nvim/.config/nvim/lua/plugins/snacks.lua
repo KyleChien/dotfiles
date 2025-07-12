@@ -15,8 +15,7 @@ return {
     explorer = { enabled = true },
     picker = { enabled = true },
     scope = { enabled = true },
-    statuscolumn = { enabled = true },
-    words = { enabled = true }
+    statuscolumn = { enabled = false },
   },
   keys = {
     -- Top Pickers & Explorer
