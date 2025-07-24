@@ -3,6 +3,8 @@
 HOMEBREW="/opt/homebrew/bin:/opt/homebrew/sbin"
 export PATH="$HOMEBREW:$PATH"
 export PATH=$HOME/development/flutter/bin:$PATH
+export EDITOR=nvim
+alias y="yazi"
 
 # >>> conda initialize >>>
 # !! Contents within this block are managed by 'conda init' !!
