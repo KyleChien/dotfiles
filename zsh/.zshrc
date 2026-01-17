@@ -63,6 +63,7 @@ alias gc='git checkout'
 alias js='jj status'
 alias jb='jj bookmark'
 alias jc='jj commit'
+alias je='jj edit'
 
 # eza, better ls 
 alias ls='eza -h -L 2 --icons=always --group-directories-first --time-style='+%Y-%m-%d %H:%M' --time=modified'
