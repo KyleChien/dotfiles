@@ -4,7 +4,6 @@ HOMEBREW="/opt/homebrew/bin:/opt/homebrew/sbin"
 export PATH="$HOMEBREW:$PATH"
 export PATH=$HOME/development/flutter/bin:$PATH
 export EDITOR=nvim
-alias y="yazi"
 
 # >>> conda initialize >>>
 # !! Contents within this block are managed by 'conda init' !!
@@ -21,19 +20,11 @@ fi
 unset __conda_setup
 # <<< conda initialize <<<
 
-# git 
-alias gs='git status'
-alias gb='git branch'
-alias gl='git log --oneline --graph --all'
-
 # oh-my-posh
 eval "$(oh-my-posh init zsh --config ~/.config/OhMyPosh/catppuccin_mocha.omp.json)"
 
 # fzf 
 eval "$(fzf --zsh)"
-
-# eza, better ls 
-alias ls='eza --long --icons=always --group-directories-first --git --all --time-style='+%Y-%m-%d %H:%M' --time=modified --no-user'
 
 # zsh-autosuggestions
 source /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh
@@ -51,3 +42,29 @@ setopt hist_ignore_dups
 setopt hist_verify
 bindkey '^[[A' history-search-backward
 bindkey '^[[B' history-search-forward
+
+# Added by Antigravity
+export PATH="/Users/kylechien/.antigravity/antigravity/bin:$PATH"
+
+# ======================================== Alias ========================================
+# dotfile 
+alias .="cd ~/dotfiles"
+
+# yazi
+alias y="yazi"
+
+# git 
+alias gs='git status'
+alias gb='git branch'
+alias gl='git log --oneline --graph --all'
+alias gc='git checkout'
+
+# jujutsu
+alias js='jj status'
+alias jb='jj bookmark'
+alias jc='jj commit'
+
+# eza, better ls 
+alias ls='eza -h -L 2 --icons=always --group-directories-first --time-style='+%Y-%m-%d %H:%M' --time=modified'
+alias ll='eza -h -l -L 2 --icons=always --group-directories-first --time-style='+%Y-%m-%d %H:%M' --time=modified'
+# ======================================== Alias ========================================

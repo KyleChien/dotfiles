@@ -1,84 +1,86 @@
 return {
-  "nvim-lualine/lualine.nvim",
-  dependencies = { "nvim-tree/nvim-web-devicons" },
-  event = "VeryLazy",
-  config = function()
-    -- Custom Lualine component to show attached language server
-    local clients_lsp = function()
-      local clients = vim.lsp.get_clients()
-      if next(clients) == nil then
-        return ""
-      end
-
-      local c = {}
-      for _, client in pairs(clients) do
-        table.insert(c, client.name)
-      end
-      return " " .. table.concat(c, "|")
+  {
+    "SmiteshP/nvim-navic",
+    dependencies = { "neovim/nvim-lspconfig" },
+    config = function()
+      require("nvim-navic").setup({
+        highlight = true,
+        separator = " > ",
+        depth_limit = 0,
+        depth_limit_indicator = "..",
+      })
     end
-
-    -- Custom filename
-    local function custom_filename()
-      if vim.bo.filetype == "neo-tree" then
-        local bufname = vim.api.nvim_buf_get_name(0)
-        local source = bufname:match("neo%-tree ([^ ]+)")
-        return source or "Neo-tree"
-      end
-
-      return vim.fn.expand("%:t")
-    end
-
-    require("lualine").setup({
-      options = {
-        globalstatus = true,
-        component_separators = "",
-        section_separators = { left = "", right = "" },
-      },
-      sections = {
-        lualine_a = {
-          { "mode", separator = { left = " ", right = "" }, icon = "" },
+  },
+  {
+    "nvim-lualine/lualine.nvim",
+    dependencies = { "nvim-tree/nvim-web-devicons" },
+    event = "VeryLazy",
+    config = function()
+      require("lualine").setup({
+        options = {
+          globalstatus = true,
+          component_separators = "",
+          section_separators = { left = "", right = "" },
         },
-        lualine_b = {
-          {
-            "filetype",
-            icon_only = true,
-            padding = { left = 1, right = 0 },
+        sections = {
+          lualine_a = {
+            { "mode", separator = { left = " ", right = "" } },
           },
-          {
-            custom_filename,
+          lualine_b = {
+            {
+              "branch",
+              icon = "",
+            },
+          },
+          lualine_c = {
+            "filename",
+            {
+              function()
+                return require("nvim-navic").get_location()
+              end,
+              cond = function()
+                return require("nvim-navic").is_available()
+              end,
+            },
+          },
+          lualine_x = {
+            {
+              "diagnostics",
+              symbols = { error = " ", warn = " ", info = " ", hint = " " },
+              update_in_insert = true,
+            },
+          },
+          lualine_y = {
+            {
+              'lsp_status',
+              icon = '', -- f013
+              symbols = {
+                -- Standard unicode symbols to cycle through for LSP progress:
+                spinner = { '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏' },
+                -- Standard unicode symbol for when LSP is done:
+                done = '✓',
+                -- Delimiter inserted between LSP names:
+                separator = ' ',
+              },
+              -- List of LSP names to ignore (e.g., `null-ls`):
+              ignore_lsp = {},
+              -- Display the LSP name
+              show_name = true,
+            },
+          },
+          lualine_z = {
+            { "location", separator = { left = "", right = " " }, icon = "" },
           },
         },
-        lualine_c = {
-          {
-            "branch",
-            icon = "",
-          },
-          {
-            "diff",
-            symbols = { added = " ", modified = " ", removed = " " },
-            colored = false,
-          },
+        inactive_sections = {
+          lualine_a = { "filename" },
+          lualine_b = {},
+          lualine_c = {},
+          lualine_x = {},
+          lualine_y = {},
+          lualine_z = { "location" },
         },
-        lualine_x = {
-          {
-            "diagnostics",
-            symbols = { error = " ", warn = " ", info = " ", hint = " " },
-            update_in_insert = true,
-          },
-        },
-        lualine_y = { clients_lsp },
-        lualine_z = {
-          { "location", separator = { left = "", right = " " }, icon = "" },
-        },
-      },
-      inactive_sections = {
-        lualine_a = { "filename" },
-        lualine_b = {},
-        lualine_c = {},
-        lualine_x = {},
-        lualine_y = {},
-        lualine_z = { "location" },
-      },
-    })
-  end,
+      })
+    end,
+  }
 }
