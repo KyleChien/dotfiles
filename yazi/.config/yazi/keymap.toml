@@ -1,0 +1,55 @@
+# keymap.toml
+[[mgr.prepend_keymap]]
+on   = "P"
+run  = "plugin toggle-pane max-preview"
+desc = "Maximize or restore the preview pane"
+
+# # keymap.toml
+# [[mgr.prepend_keymap]]
+# on   = "}"
+# run  = "plugin zoom 1"
+# desc = "Zoom in hovered file"
+#
+# [[mgr.prepend_keymap]]
+# on   = "{"
+# run  = "plugin zoom -1"
+# desc = "Zoom out hovered file"
+
+[[mgr.prepend_keymap]]
+on = "'"
+run = "plugin whoosh jump_by_key"
+desc = "Jump bookmark by key"
+
+# Basic bookmark operations
+[[mgr.prepend_keymap]]
+on = [ "\"", "a" ]
+run = "plugin whoosh save"
+desc = "Add bookmark (hovered file/directory)"
+
+[[mgr.prepend_keymap]]
+on = [ "\"", "A" ]
+run = "plugin whoosh save_cwd"
+desc = "Add bookmark (current directory)"
+
+[[mgr.prepend_keymap]]
+on = [ "\"", "f" ]
+run = "plugin whoosh jump_by_fzf"
+desc = "Jump bookmark by fzf"
+
+# Rename bookmarks
+[[mgr.prepend_keymap]]
+on = [ "\"", "r" ]
+run = "plugin whoosh rename_by_key"
+desc = "Rename bookmark by key"
+
+# Delete bookmarks
+[[mgr.prepend_keymap]]
+on = [ "\"", "d" ]
+run = "plugin whoosh delete_by_key"
+desc = "Delete bookmark by key"
+
+[[mgr.prepend_keymap]]
+on = [ "\"", "D" ]
+run = "plugin whoosh delete_all"
+desc = "Delete all user bookmarks"
+
