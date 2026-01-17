@@ -1,17 +1,5 @@
 return {
   {
-    "SmiteshP/nvim-navic",
-    dependencies = { "neovim/nvim-lspconfig" },
-    config = function()
-      require("nvim-navic").setup({
-        highlight = true,
-        separator = " > ",
-        depth_limit = 0,
-        depth_limit_indicator = "..",
-      })
-    end
-  },
-  {
     "nvim-lualine/lualine.nvim",
     dependencies = { "nvim-tree/nvim-web-devicons" },
     event = "VeryLazy",
@@ -32,17 +20,7 @@ return {
               icon = "",
             },
           },
-          lualine_c = {
-            "filename",
-            {
-              function()
-                return require("nvim-navic").get_location()
-              end,
-              cond = function()
-                return require("nvim-navic").is_available()
-              end,
-            },
-          },
+          lualine_c = { "filename", },
           lualine_x = {
             {
               "diagnostics",

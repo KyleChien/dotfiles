@@ -7,7 +7,7 @@ return {
     show_icons = true,
     leader_key = ',',            -- Recommended to be a single key
     buffer_leader_key = 'm',     -- Per Buffer Mappings
-    hide_handbook = true,        -- set to true to hide the shortcuts on menu.
+    hide_handbook = false,        -- set to true to hide the shortcuts on menu.
     hide_buffer_handbook = true, --set to true to hide shortcuts on buffer menu
     mappings = {
       edit = "e",

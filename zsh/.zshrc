@@ -3,6 +3,7 @@
 HOMEBREW="/opt/homebrew/bin:/opt/homebrew/sbin"
 export PATH="$HOMEBREW:$PATH"
 export PATH=$HOME/development/flutter/bin:$PATH
+export PATH=$HOME/.cargo/bin:$PATH
 export EDITOR=nvim
 
 # >>> conda initialize >>>
@@ -49,6 +50,10 @@ export PATH="/Users/kylechien/.antigravity/antigravity/bin:$PATH"
 # ======================================== Alias ========================================
 # dotfile 
 alias .="cd ~/dotfiles"
+alias .nvim="cd ~/dotfiles/nvim/.config/nvim"
+alias .wezterm="cd ~/dotfiles/wezterm/.config/wezterm"
+alias .yazi="cd ~/dotfiles/yazi/.config/yazi"
+alias .zsh="cd ~/dotfiles/zsh"
 
 # yazi
 alias y="yazi"
@@ -64,6 +69,7 @@ alias js='jj status'
 alias jb='jj bookmark'
 alias jc='jj commit'
 alias je='jj edit'
+alias lj='lazyjj'
 
 # eza, better ls 
 alias ls='eza -h -L 2 --icons=always --group-directories-first --time-style='+%Y-%m-%d %H:%M' --time=modified'
