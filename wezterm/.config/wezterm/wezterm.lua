@@ -12,7 +12,7 @@ end)
 wezterm.on("toggle-opacity", function(window, pane)
   local overrides = window:get_config_overrides() or {}
   overrides.window_background_opacity =
-    overrides.window_background_opacity and nil or 1
+      overrides.window_background_opacity and nil or 1
   window:set_config_overrides(overrides)
 end)
 
@@ -45,7 +45,6 @@ require("plugins.smart-splits").setup(config)
 -- =========================
 -- Tabline plugin
 -- =========================
-require("plugins.tabline").setup({})
+require("plugins.tabline").setup()
 
 return config
-

@@ -9,8 +9,8 @@ end, { expr = true, desc = "Escape and Clear hlsearch" })
 
 -- better up/down
 vim.keymap.set({ "n", "x" }, "j", "v:count == 0 ? 'gj' : 'j'", { desc = "Down", expr = true, silent = true })
-vim.keymap.set({ "n", "x" }, "<Down>", "v:count == 0 ? 'gj' : 'j'", { desc = "Down", expr = true, silent = true })
 vim.keymap.set({ "n", "x" }, "k", "v:count == 0 ? 'gk' : 'k'", { desc = "Up", expr = true, silent = true })
+vim.keymap.set({ "n", "x" }, "<Down>", "v:count == 0 ? 'gj' : 'j'", { desc = "Down", expr = true, silent = true })
 vim.keymap.set({ "n", "x" }, "<Up>", "v:count == 0 ? 'gk' : 'k'", { desc = "Up", expr = true, silent = true })
 
 -- -- Move to window using the <ctrl> hjkl keys
@@ -63,10 +63,11 @@ vim.keymap.set("v", "p", '"_dp')
 vim.keymap.set("v", "P", '"_dP')
 
 -- window management
-vim.keymap.set("n", "<leader>wv", function() vim.cmd("vsplit") end, { desc = "Split window vertically" })
-vim.keymap.set("n", "<leader>ws", function() vim.cmd("split") end, { desc = "Split window horizontally" })
+vim.keymap.set("n", "<leader>w|", function() vim.cmd("vsplit") end, { desc = "Split window vertically" })
+vim.keymap.set("n", "<leader>w-", function() vim.cmd("split") end, { desc = "Split window horizontally" })
 vim.keymap.set("n", "<leader>w=", function() vim.cmd("wincmd =") end, { desc = "Make splits equal size" })
-vim.keymap.set("n", "<leader>wq", function() vim.cmd("close") end, { desc = "Close current split" })
+vim.keymap.set("n", "<leader>wx", function() vim.cmd("close") end, { desc = "Close current split" })
+vim.keymap.set("n", "<leader>wd", function() vim.diagnostic.open_float() end)
 
 -- better scroll
 vim.keymap.set({ "n", "v" }, "<C-d>", "<C-d>zz", { desc = "Scroll downwards" })

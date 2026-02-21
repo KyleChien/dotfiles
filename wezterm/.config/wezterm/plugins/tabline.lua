@@ -4,14 +4,14 @@ local tabline = wezterm.plugin.require(
 )
 local M = {}
 
-function M.setup(config)
+function M.setup()
   tabline.setup({
     options = {
       tabs_enabled = true,
       icons_enabled = false,
       section_separators = "",
       component_separators = "",
-      tab_separators = "",
+      tab_separators = " ",
       theme_overrides = {
         -- Defining colors for a new key table
         leader_mode = {
@@ -31,11 +31,11 @@ function M.setup(config)
       tabline_b = {},
       tabline_c = {},
       tab_active = {
-        " • ",
+        "index",
         { "process", padding = 0 },
       },
       tab_inactive = {
-        " • ",
+        "index",
         { "process", padding = 0 },
       },
       tabline_x = {},
