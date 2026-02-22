@@ -44,7 +44,7 @@ return {
 						},
 					},
 					lualine_z = {
-						{ "location", separator = { left = "", right = " " }, icon = "" },
+						{ "progress", separator = { left = "", right = " " }, icon = "" },
 					},
 				},
 				inactive_sections = {
