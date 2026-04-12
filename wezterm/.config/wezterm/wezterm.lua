@@ -20,6 +20,7 @@ end)
 -- Base config
 -- =========================
 local config = wezterm.config_builder()
+config.default_workspace = "west"
 config.color_scheme = "rose-pine-moon"
 config.font_size = 18
 config.enable_tab_bar = true

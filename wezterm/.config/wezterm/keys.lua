@@ -19,6 +19,13 @@ function M.setup(config)
   }
 
   config.keys = {
+    --- Copy to clipboard
+    { key = 'c', mods = 'CMD', action = act.CopyTo 'Clipboard' },
+    -- Paste from clipboard
+    { key = 'v', mods = 'CMD', action = act.PasteFrom 'Clipboard' },
+    -- Quit wezterm
+    { key = 'q', mods = 'CMD', action = act.QuitApplication },
+
     -- =================================== mode ====================================
     {
       key = "w",
@@ -44,17 +51,31 @@ function M.setup(config)
 
     -- ================================= workspace =================================
     {
-      key = 'd',
+      key = 'h',
       mods = 'CTRL|SHIFT',
       action = act.SwitchToWorkspace {
-        name = 'default',
+        name = 'west',
       },
     },
     {
-      key = 'e',
+      key = 'j',
       mods = 'CTRL|SHIFT',
       action = act.SwitchToWorkspace {
-        name = 'explore',
+        name = 'north',
+      },
+    },
+    {
+      key = 'k',
+      mods = 'CTRL|SHIFT',
+      action = act.SwitchToWorkspace {
+        name = 'south',
+      },
+    },
+    {
+      key = 'l',
+      mods = 'CTRL|SHIFT',
+      action = act.SwitchToWorkspace {
+        name = 'east',
       },
     },
     {
