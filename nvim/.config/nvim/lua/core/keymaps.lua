@@ -1,10 +1,14 @@
 vim.g.mapleader = " "
 vim.keymap.set("n", ";", ":", { desc = "Quick command" })
 
+-- Terminal: Escape back to normal mode
+vim.keymap.set('t', '<Esc>', '<C-\\><C-n>', { desc = 'Escape terminal mode' })
+vim.keymap.set("t", "<C-c>", "<C-\\><C-n>", { desc = "Escape terminal mode" })
+
 -- Clear search and stop snippet on escape
 vim.keymap.set({ "i", "n", "s" }, "<esc>", function()
-  vim.cmd("noh")
-  return "<esc>"
+	vim.cmd("noh")
+	return "<esc>"
 end, { expr = true, desc = "Escape and Clear hlsearch" })
 
 -- better up/down
@@ -63,11 +67,21 @@ vim.keymap.set("v", "p", '"_dp')
 vim.keymap.set("v", "P", '"_dP')
 
 -- window management
-vim.keymap.set("n", "<leader>w|", function() vim.cmd("vsplit") end, { desc = "Split window vertically" })
-vim.keymap.set("n", "<leader>w-", function() vim.cmd("split") end, { desc = "Split window horizontally" })
-vim.keymap.set("n", "<leader>w=", function() vim.cmd("wincmd =") end, { desc = "Make splits equal size" })
-vim.keymap.set("n", "<leader>wx", function() vim.cmd("close") end, { desc = "Close current split" })
-vim.keymap.set("n", "<leader>wd", function() vim.diagnostic.open_float() end)
+vim.keymap.set("n", "<leader>w|", function()
+	vim.cmd("vsplit")
+end, { desc = "Split window vertically" })
+vim.keymap.set("n", "<leader>w-", function()
+	vim.cmd("split")
+end, { desc = "Split window horizontally" })
+vim.keymap.set("n", "<leader>w=", function()
+	vim.cmd("wincmd =")
+end, { desc = "Make splits equal size" })
+vim.keymap.set("n", "<leader>wx", function()
+	vim.cmd("close")
+end, { desc = "Close current split" })
+vim.keymap.set("n", "<leader>wd", function()
+	vim.diagnostic.open_float()
+end)
 
 -- better scroll
 vim.keymap.set({ "n", "v" }, "<C-d>", "<C-d>zz", { desc = "Scroll downwards" })
@@ -76,55 +90,56 @@ vim.keymap.set({ "n", "v" }, "<C-n>", "}", { desc = "Next paragraph" })
 vim.keymap.set({ "n", "v" }, "<C-p>", "{", { desc = "Next paragraph" })
 
 -- lsp
-vim.keymap.set("n", "<leader>fm", function() vim.lsp.buf.format() end, { desc = "Lsp format" })
+vim.keymap.set("n", "<leader>fm", function()
+	vim.lsp.buf.format()
+end, { desc = "Lsp format" })
 
 -- disable substitude
 vim.keymap.set({ "n", "v" }, "s", "<Nop>", { noremap = true, silent = true })
 
 -- spliter
 local function insert_commented_splitter_below()
-  local total_width = 80
-  local pad_char = "="
+	local total_width = 80
+	local pad_char = "="
 
-  local title = vim.fn.input("Splitter title: ")
-  if title == "" then return end
+	local title = vim.fn.input("Splitter title: ")
+	if title == "" then
+		return
+	end
 
-  -- Get commentstring (e.g. "// %s", "# %s", "-- %s")
-  local cs = vim.bo.commentstring
-  if cs == "" or not cs:find("%%s") then
-    cs = "%s"
-  end
+	-- Get commentstring (e.g. "// %s", "# %s", "-- %s")
+	local cs = vim.bo.commentstring
+	if cs == "" or not cs:find("%%s") then
+		cs = "%s"
+	end
 
-  -- Extract comment prefix
-  local prefix = cs:match("^(.*)%%s") or ""
-  prefix = prefix:gsub("%s*$", "") .. " "
+	-- Extract comment prefix
+	local prefix = cs:match("^(.*)%%s") or ""
+	prefix = prefix:gsub("%s*$", "") .. " "
 
-  local available = total_width - #prefix
-  local title_with_spaces = " " .. title .. " "
-  local padding = available - #title_with_spaces
+	local available = total_width - #prefix
+	local title_with_spaces = " " .. title .. " "
+	local padding = available - #title_with_spaces
 
-  local line
-  if padding < 0 then
-    line = prefix .. title
-  else
-    local left = math.floor(padding / 2)
-    local right = padding - left
-    line = prefix
-        .. string.rep(pad_char, left)
-        .. title_with_spaces
-        .. string.rep(pad_char, right)
-  end
+	local line
+	if padding < 0 then
+		line = prefix .. title
+	else
+		local left = math.floor(padding / 2)
+		local right = padding - left
+		line = prefix .. string.rep(pad_char, left) .. title_with_spaces .. string.rep(pad_char, right)
+	end
 
-  -- Insert BELOW cursor
-  local row = vim.api.nvim_win_get_cursor(0)[1]
-  vim.api.nvim_buf_set_lines(0, row, row, false, { line })
+	-- Insert BELOW cursor
+	local row = vim.api.nvim_win_get_cursor(0)[1]
+	vim.api.nvim_buf_set_lines(0, row, row, false, { line })
 
-  -- Move cursor to the inserted line (optional but nice)
-  vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
+	-- Move cursor to the inserted line (optional but nice)
+	vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
 end
 
 vim.keymap.set("n", "<leader>=", insert_commented_splitter_below, {
-  noremap = true,
-  silent = true,
-  desc = "Insert centered commented splitter below",
+	noremap = true,
+	silent = true,
+	desc = "Insert centered commented splitter below",
 })
