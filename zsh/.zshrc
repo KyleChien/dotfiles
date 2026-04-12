@@ -4,6 +4,8 @@ HOMEBREW="/opt/homebrew/bin:/opt/homebrew/sbin"
 export PATH="$HOMEBREW:$PATH"
 export PATH=$HOME/development/flutter/bin:$PATH
 export PATH=$HOME/.cargo/bin:$PATH
+export PATH=$HOME/.local/bin:$PATH
+export PATH=$HOME/.opencode/bin:$PATH
 export EDITOR=nvim
 
 # >>> conda initialize >>>
@@ -44,9 +46,6 @@ setopt hist_verify
 bindkey '^[[A' history-search-backward
 bindkey '^[[B' history-search-forward
 
-# Added by Antigravity
-export PATH="/Users/kylechien/.antigravity/antigravity/bin:$PATH"
-
 # ======================================== Alias ========================================
 # dotfile 
 alias .="cd ~/dotfiles"
@@ -55,8 +54,15 @@ alias .wezterm="cd ~/dotfiles/wezterm/.config/wezterm"
 alias .yazi="cd ~/dotfiles/yazi/.config/yazi"
 alias .zsh="cd ~/dotfiles/zsh"
 
+# nvim 
+alias nv="nvim"
+
+# opencode 
+alias oc="opencode"
+alias cc="claude"
+
 # yazi
-alias y="yazi"
+alias yz="yazi"
 
 # git 
 alias gs='git status'
@@ -64,14 +70,8 @@ alias gb='git branch'
 alias gl='git log --oneline --graph --all'
 alias gc='git checkout'
 
-# jujutsu
-alias js='jj status'
-alias jb='jj bookmark'
-alias jc='jj commit'
-alias je='jj edit'
-alias lj='lazyjj'
-
 # eza, better ls 
 alias ls='eza -h -L 2 --icons=always --group-directories-first --time-style='+%Y-%m-%d %H:%M' --time=modified'
 alias ll='eza -h -l -L 2 --icons=always --group-directories-first --time-style='+%Y-%m-%d %H:%M' --time=modified'
-# ======================================== Alias ========================================
+alias la='eza -h -l -L 2 -a --icons=always --group-directories-first --time-style='+%Y-%m-%d %H:%M' --time=modified'
+
