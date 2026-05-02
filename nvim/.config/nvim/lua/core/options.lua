@@ -1,10 +1,19 @@
 vim.cmd("let g:netrw_liststyle = 3")
 vim.o.cmdheight = 0
 
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "*",
+  callback = function()
+    vim.opt_local.formatoptions:remove({ "r", "o" })
+  end,
+})
+
 local opt = vim.opt
 
+opt.winborder = "rounded"
 opt.relativenumber = true
 opt.number = true
+opt.showtabline = 0
 
 -- tabs & indentation
 opt.tabstop = 2 -- 2 spaces for tabs (prettier default)
