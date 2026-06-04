@@ -31,7 +31,7 @@ function M.setup(config)
       key = "w",
       mods = "CTRL",
       action = act.ActivateKeyTable {
-        name = 'leader_mode',
+        name = 'leader',
         one_shot = true,
       },
     },
@@ -39,7 +39,7 @@ function M.setup(config)
       key = 'w',
       mods = 'CTRL|SHIFT',
       action = act.ActivateKeyTable {
-        name = 'leader_mode',
+        name = 'leader',
         one_shot = false,
       },
     },
@@ -113,7 +113,7 @@ function M.setup(config)
   }
 
   config.key_tables = {
-    leader_mode = {
+    leader = {
       { key = 'Escape', action = act.PopKeyTable },
       { key = 'p',      action = act.ActivateCommandPalette },
       { key = 'm',      action = act.TogglePaneZoomState },
@@ -136,8 +136,8 @@ function M.setup(config)
 
   -- ==================================== tab ====================================
   for i = 1, 9 do
-    -- leader_mode + number to activate that tab
-    table.insert(config.key_tables.leader_mode, {
+    -- leader + number to activate that tab
+    table.insert(config.key_tables.leader, {
       key = tostring(i),
       action = act.ActivateTab(i - 1),
     })
