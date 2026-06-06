@@ -1,5 +1,5 @@
 vim.g.mapleader = " "
-vim.keymap.set("n", ";", ":", { desc = "Quick command" })
+-- vim.keymap.set("n", ";", ":", { desc = "Quick command" })
 
 -- Terminal: Escape back to normal mode
 vim.keymap.set('t', '<Esc>', '<C-\\><C-n>', { desc = 'Escape terminal mode' })

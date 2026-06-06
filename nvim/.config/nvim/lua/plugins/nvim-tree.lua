@@ -24,7 +24,7 @@ return {
     })
 
     -- keymap
-    vim.keymap.set("n", "<leader>e", ":NvimTreeFindFile<CR>", {
+    vim.keymap.set("n", "<leader>b", ":NvimTreeFindFile<CR>", {
       noremap = true,
       silent = true,
       desc = "Reveal current file in NvimTree"
