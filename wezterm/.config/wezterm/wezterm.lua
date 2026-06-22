@@ -20,6 +20,13 @@ local config = wezterm.config_builder()
 config.default_workspace = "west"
 config.color_scheme = "rose-pine-moon"
 config.font_size = 18
+config.colors = {
+  -- keep the original text color showing through the highlight
+  selection_fg = 'none',
+  -- Rosé Pine Moon's "highlightMed" — their own selection/highlight color
+  selection_bg = '#44415a',
+}
+
 
 -- ============================================================================
 -- Window: opacity, blur, decorations, and pane dimming
@@ -37,12 +44,12 @@ config.inactive_pane_hsb = {
 -- ============================================================================
 config.enable_tab_bar = true
 config.hide_tab_bar_if_only_one_tab = false
-config.show_new_tab_button_in_tab_bar = false
+config.show_new_tab_button_in_tab_bar = true
 config.show_tab_index_in_tab_bar = true
 config.status_update_interval = 1000
 config.tab_bar_at_bottom = false
-config.tab_max_width = 30
 config.use_fancy_tab_bar = false
+config.tab_max_width = 30
 
 -- ============================================================================
 -- Keybindings
