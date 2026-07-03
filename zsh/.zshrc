@@ -52,6 +52,7 @@ alias .="cd ~/dotfiles"
 alias .nvim="cd ~/dotfiles/nvim/.config/nvim"
 alias .wezterm="cd ~/dotfiles/wezterm/.config/wezterm"
 alias .yazi="cd ~/dotfiles/yazi/.config/yazi"
+alias .rio="cd ~/dotfiles/rio/.config/rio"
 alias .zsh="cd ~/dotfiles/zsh"
 
 # nvim 
@@ -75,3 +76,6 @@ alias ls='eza -h -L 2 --icons=always --group-directories-first --time-style='+%Y
 alias ll='eza -h -l -L 2 --icons=always --group-directories-first --time-style='+%Y-%m-%d %H:%M' --time=modified'
 alias la='eza -h -l -L 2 -a --icons=always --group-directories-first --time-style='+%Y-%m-%d %H:%M' --time=modified'
 
+
+# # Added by GitButler installer
+# eval "$(but completions zsh)"
