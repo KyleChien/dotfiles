@@ -6,7 +6,7 @@ local tree = require("symboltree.tree")
 local M = {}
 local ns = vim.api.nvim_create_namespace("symboltree")
 
--- state = { win, buf, cfg, roots, rows, base_win, origin_win }
+-- state = { win, buf, cfg, roots, rows, origin_win }
 local state = nil
 
 -- ── rendering ──────────────────────────────────────────────────────────────
@@ -39,8 +39,138 @@ local function add_hl(line, span, group)
   })
 end
 
+-- ── window geometry ──────────────────────────────────────────────────────────
+--
+-- Size values (width/height and the max_* bounds) accept:
+--   integer >= 1   → absolute cells
+--   float in (0,1) → fraction of the editor dimension
+--   "max"          → fill the usable axis (editor minus border/chrome)
+--   "fit"          → hug content, clamped by min_/max_ bounds (fold-reactive)
+
+-- Longest visible row (display cells) and row count. +2 pads the width so text
+-- doesn't touch the border when a dimension is "fit".
+local function content_dims(lines)
+  local w = 1
+  for _, l in ipairs(lines) do
+    w = math.max(w, vim.fn.strdisplaywidth(l))
+  end
+  return w + 2, #lines
+end
+
+-- Rows consumed by the tabline (0 or 1).
+local function tabline_rows()
+  local st = vim.o.showtabline
+  if st == 2 or (st == 1 and #vim.api.nvim_list_tabpages() > 1) then
+    return 1
+  end
+  return 0
+end
+
+-- Inner extents (excluding border) a float may occupy, plus the tabline offset.
+local function usable_area()
+  local tab = tabline_rows()
+  local avail_w = math.max(1, vim.o.columns - 2)
+  local avail_h = math.max(1, vim.o.lines - vim.o.cmdheight - tab - 2)
+  return avail_w, avail_h, tab
+end
+
+-- Resolve a concrete extent (number or "max") into cells for an axis.
+local function resolve_extent(value, axis, avail)
+  if value == "max" or value == "maximized" then
+    return avail
+  end
+  if type(value) == "number" then
+    local base = axis == "width" and vim.o.columns or vim.o.lines
+    local cells = (value > 0 and value < 1) and math.floor(base * value) or math.floor(value)
+    return math.max(1, math.min(cells, avail))
+  end
+  return avail
+end
+
+-- Resolve a dimension spec (including "fit") into cells.
+local function resolve_dim(spec, lcfg, axis, content_len, avail)
+  if spec ~= "fit" then
+    return resolve_extent(spec, axis, avail)
+  end
+  local min_key = axis == "width" and "min_width" or "min_height"
+  local max_key = axis == "width" and "max_width" or "max_height"
+  local mn = lcfg[min_key] or 1
+  local mx = resolve_extent(lcfg[max_key] or "max", axis, avail)
+  return math.max(1, math.min(math.max(mn, math.min(content_len, mx)), avail))
+end
+
+-- Compute the full floating-window geometry for the active layout. Border is
+-- drawn outside the returned row/col/width/height, so valid content corners are
+-- inset by one cell from every editor edge.
+local function compute_geometry(cfg, content_w, content_h)
+  local win = cfg.window
+  local avail_w, avail_h, tab = usable_area()
+
+  if type(win.layout) == "function" then
+    return win.layout({
+      columns = vim.o.columns,
+      lines = vim.o.lines,
+      avail_w = avail_w,
+      avail_h = avail_h,
+      content_w = content_w,
+      content_h = content_h,
+    })
+  end
+
+  local layout = win.layout
+  local lcfg = (win.layouts and win.layouts[layout]) or {}
+  local W = resolve_dim(lcfg.width or "fit", lcfg, "width", content_w, avail_w)
+  local H = resolve_dim(lcfg.height or "fit", lcfg, "height", content_h, avail_h)
+
+  local col_min, col_max = 1, vim.o.columns - 1 - W
+  local row_min, row_max = tab + 1, vim.o.lines - vim.o.cmdheight - 1 - H
+  local center_col = math.floor((col_min + col_max) / 2)
+  local center_row = math.floor((row_min + row_max) / 2)
+
+  local row, col
+  if layout == "left" then
+    col, row = col_min, center_row
+  elseif layout == "right" then
+    col, row = col_max, center_row
+  elseif layout == "top" then
+    row, col = row_min, center_col
+  elseif layout == "bottom" then
+    row, col = row_max, center_col
+  else -- center (and any unknown name)
+    row, col = center_row, center_col
+  end
+
+  return {
+    relative = "editor",
+    row = math.max(row_min, math.min(row, row_max)),
+    col = math.max(col_min, math.min(col, col_max)),
+    width = W,
+    height = H,
+  }
+end
+
+-- Build the nvim_open_win / nvim_win_set_config table from a geometry.
+local function win_config(geo, cfg)
+  local c = {
+    relative = geo.relative or "editor",
+    row = geo.row,
+    col = geo.col,
+    width = geo.width,
+    height = geo.height,
+    style = "minimal",
+    border = cfg.window.border,
+    title = cfg.window.title,
+    title_pos = "center",
+    zindex = 60,
+  }
+  if geo.anchor then
+    c.anchor = geo.anchor
+  end
+  return c
+end
+
 -- Recompute rows from fold state, rewrite the buffer, reapply highlights, and
--- resize the window's height to fit (width/position stay fixed from open).
+-- re-fit the window to the active layout (only "fit" dimensions track content).
 local function render()
   state.rows = tree.flatten(state.roots)
   local lines, segs = {}, {}
@@ -63,9 +193,8 @@ local function render()
     add_hl(i - 1, seg.name, group)
   end
 
-  local max_h = math.floor(vim.o.lines * state.cfg.window.max_height_ratio)
-  local height = math.max(1, math.min(#lines, max_h))
-  vim.api.nvim_win_set_config(state.win, vim.tbl_extend("force", state.base_win, { height = height }))
+  local cw, ch = content_dims(lines)
+  vim.api.nvim_win_set_config(state.win, win_config(compute_geometry(state.cfg, cw, ch), state.cfg))
 end
 
 -- Move the cursor to `node`'s row; if it's not visible, climb to the nearest
@@ -86,36 +215,6 @@ end
 local function current_row()
   local line = vim.api.nvim_win_get_cursor(state.win)[1]
   return state.rows[line], line
-end
-
--- ── window geometry ──────────────────────────────────────────────────────────
-
-local function compute_dims(lines, cfg)
-  local width = cfg.window.min_width
-  for _, l in ipairs(lines) do
-    width = math.max(width, vim.fn.strdisplaywidth(l))
-  end
-  width = math.min(width + 2, cfg.window.max_width)
-  local max_h = math.floor(vim.o.lines * cfg.window.max_height_ratio)
-  local height = math.max(1, math.min(#lines, max_h))
-  return width, height
-end
-
-local function compute_position(width, height, cfg)
-  local pos = cfg.window.position
-  if type(pos) == "function" then
-    return pos({ width = width, height = height })
-  end
-  local cols, lns = vim.o.columns, vim.o.lines
-  local presets = {
-    center = { relative = "editor", row = math.floor((lns - height) / 2 - 1), col = math.floor((cols - width) / 2) },
-    topleft = { relative = "editor", row = 1, col = 2 },
-    topright = { relative = "editor", row = 1, col = cols - width - 4 },
-    botleft = { relative = "editor", row = lns - height - 4, col = 2 },
-    botright = { relative = "editor", row = lns - height - 4, col = cols - width - 4 },
-    cursor = { relative = "cursor", row = 1, col = 0 },
-  }
-  return presets[pos] or presets.center
 end
 
 -- ── actions (the rebindable behavior surface) ────────────────────────────────
@@ -250,26 +349,10 @@ function M.open(roots, cfg, origin)
   for i, row in ipairs(rows) do
     lines[i] = build_line(row, cfg)
   end
-  local width, height = compute_dims(lines, cfg)
-  local p = compute_position(width, height, cfg)
+  local cw, ch = content_dims(lines)
+  local geo = compute_geometry(cfg, cw, ch)
 
-  local base = {
-    relative = p.relative,
-    row = p.row,
-    col = p.col,
-    width = width,
-    height = height,
-    style = "minimal",
-    border = cfg.window.border,
-    title = cfg.window.title,
-    title_pos = "center",
-    zindex = 60,
-  }
-  if p.anchor then
-    base.anchor = p.anchor
-  end
-
-  local win = vim.api.nvim_open_win(buf, true, base)
+  local win = vim.api.nvim_open_win(buf, true, win_config(geo, cfg))
   vim.wo[win].cursorline = true
   vim.wo[win].wrap = false
   vim.wo[win].number = false
@@ -282,7 +365,6 @@ function M.open(roots, cfg, origin)
     cfg = cfg,
     roots = roots,
     rows = rows,
-    base_win = base,
     origin_win = origin.win,
   }
 

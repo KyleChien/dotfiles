@@ -49,8 +49,11 @@ table so it can be extended later without touching the core.
 21. As a developer, I want kind highlights **linked to my colorscheme's groups**, so that the outline matches whatever theme I'm using without manual color config.
 22. As a developer, I want a **chevron on branch nodes** (and nothing on leaves), so that I can see at a glance what's foldable.
 23. As a developer with a huge file, I want the float to **clamp its size and scroll internally**, so that a massive outline stays usable and on-screen.
-24. As a developer, I want the float **centered with a rounded border** and a ` Symbols ` title by default, so that it looks clean and is easy to locate.
-25. As a power user, I want to configure the float's **position** via a preset (`center`, `cursor`, `topright`, …) or a function, so that I can place it where I like without patching the plugin.
+24. As a developer, I want the float to open as a **right-hand column with maximized height** by default, with a rounded border and ` Symbols ` title, so that the outline docks where I expect and stays out of my editing area.
+25. As a power user, I want to choose the float's **layout** from `center` / `left` / `right` / `top` / `bottom` (or a function), so that I can dock the outline where I like without patching the plugin.
+30. As a power user, I want each layout's **width and height independently sizable** — absolute cells, a fraction of the editor, `"max"`, or `"fit"` — so that I can dial in exactly the panel shape I want per layout.
+31. As a power user, I want a **maximized** dimension to fill the editor edge-to-edge without clipping the border or crowding the command line, so that a docked panel looks intentional.
+32. As a developer, I want the float to **always stay floating** (never a split), so that it never disturbs my window layout.
 26. As a power user, I want to **rebind any key and swap any action** through a config table, so that I can adapt the plugin (e.g. add live-preview or leaf-jump later) without editing core code.
 27. As a power user, I want to **override any kind glyph** in config, so that I can match my own icon preferences.
 28. As a config maintainer, I want the plugin **lazy-loaded on the `;` key**, so that it adds nothing to startup time.
@@ -112,14 +115,26 @@ table so it can be extended later without touching the core.
   Class→`Type`, Variable→`Identifier`), defined once at setup so they follow
   theme changes.
 
-- **Window:** default **centered**, **rounded border**, title ` Symbols `.
-  Width = clamp(longest row + padding, min 30, max 60). Height =
-  clamp(row count, min 1, max ≈60% of editor height); the buffer scrolls when
-  the outline exceeds the height. **Position is configurable** via
-  `opts.window.position`, accepting a preset string
-  (`"center"` | `"cursor"` | `"topright"` | `"topleft"` | `"botright"` |
-  `"botleft"`) **or** a function `function(dims) -> { relative, row, col, anchor }`.
-  Width/height clamping is independent of position.
+- **Window:** always a **floating** window with a **rounded border** and title
+  ` Symbols `. Placement is driven by a **layout system** (`opts.window.layout`),
+  one of five presets — `center` | `left` | `right` | `top` | `bottom` —
+  **or** a function `function(ctx) -> { relative, row, col, width, height,
+  anchor? }` (escape hatch). **Default is `right` with `height = "max"`.**
+  Docked layouts (left/right/top/bottom) sit **flush against their edge** and
+  are **centered on the free axis**; center sits in the middle.
+
+- **Layout sizing:** each layout has its own `width`/`height` under
+  `opts.window.layouts.<name>`. Every size value (and the `max_*` bounds) accepts
+  one of four forms: **integer** (absolute cells), **float in (0,1)** (fraction
+  of the editor dimension), **`"max"`** (fill the axis, editor minus border and
+  command-line chrome), or **`"fit"`** (hug content, clamped by
+  `min_width`/`max_width`/`min_height`/`max_height`). `"fit"` dimensions re-fit
+  as you fold; `"max"`/fixed/fraction dimensions hold their shape. `center`
+  defaults both axes to `"fit"` (its previous content-hug behavior); docked
+  layouts default the docked panel to a fixed size with the cross-axis
+  `"max"`imized. Border is drawn outside the sizing box, so resolved geometry is
+  inset one cell from each editor edge and can never clip or overlap the command
+  line. Runtime layout switching is out of scope (config-time only).
 
 - **Empty/error handling:** if no client supports the method or the merged
   result is empty, `vim.notify` a short message and do **not** open a float.

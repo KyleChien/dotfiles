@@ -22,14 +22,27 @@ M.config = {
   },
 
   window = {
-    -- "center" | "cursor" | "topleft" | "topright" | "botleft" | "botright"
-    -- or function(dims) -> { relative, row, col, anchor? }
-    position = "center",
+    -- Active layout: "center" | "left" | "right" | "top" | "bottom",
+    -- or a function(ctx) -> { relative, row, col, width, height, anchor? }
+    -- where ctx = { columns, lines, avail_w, avail_h, content_w, content_h }.
+    layout = "right",
     border = "rounded",
     title = " Symbols ",
-    min_width = 30,
-    max_width = 60,
-    max_height_ratio = 0.6,
+
+    -- Per-layout sizing. width/height (and the max_* bounds) each accept:
+    --   integer >= 1   → absolute cells
+    --   float in (0,1) → fraction of the editor dimension
+    --   "max"          → fill the axis (editor minus border/command-line)
+    --   "fit"          → hug content, clamped by min_/max_ (re-fits on fold)
+    -- Docked layouts sit flush against their edge and are centered on the free
+    -- axis; a maximized dimension spans the full editor.
+    layouts = {
+      center = { width = "fit", height = "fit", min_width = 30, max_width = 60, max_height = 0.6 },
+      left = { width = 30, height = "max" },
+      right = { width = 30, height = "max" },
+      top = { height = 15, width = "max" },
+      bottom = { height = 15, width = "max" },
+    },
   },
 
   chevron = { expanded = "", collapsed = "" },
