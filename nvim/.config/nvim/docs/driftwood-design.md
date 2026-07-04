@@ -141,6 +141,17 @@ The shell (`window` + `render` + `tree`) never mentions symbols, LSP, or ranges.
 - **WinLeave-autoclose:** unchanged. Layout switching keeps focus in the float,
   so it never trips the autoclose.
 - **Snapshot content:** tree fetched once on open; edits go stale until reopen.
+- **Follow mode (symbols only, `providers.symbols.follow`):** when `enabled`, a
+  `CursorMoved` autocmd on the float previews the hovered node in the origin
+  window — paints `node.range` whole-line with `follow.hl` (a `driftwood_follow`
+  namespace on the *origin* buffer) and moves the origin cursor to
+  `selection_range.start`, `zz`-recentered when `follow.recenter`. Both the scroll
+  and cursor set run inside `nvim_win_call` (no `WinLeave`, so no self-close;
+  focus stays in the float). Browsing is non-destructive: `winsaveview()` is
+  snapshotted on open and `winrestview`d on any cancel (close key or click-away);
+  only `jump` (`<CR>`) commits and skips the restore. Node-cached on
+  `state.follow_node` so redundant fires are no-ops. Disabled → no snapshot, no
+  cursor move, no paint (zero behavior change).
 
 ## Implementation sequence (safe, incremental)
 

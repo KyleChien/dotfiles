@@ -71,6 +71,16 @@ M.config = {
 
       chevron = { expanded = "▾", collapsed = "▸" },
 
+      -- Live follow (preview) mode. As the cursor moves over the outline, paint
+      -- the hovered symbol's full range in the origin window and move its cursor
+      -- onto the symbol's name so the symbol is always visible on-screen.
+      -- Browsing is non-destructive: dismissing with a close/toggle key snaps the
+      -- origin cursor+view back to where it was on open — only `jump` commits.
+      --   enabled  → on/off switch for the whole feature.
+      --   hl       → highlight group painted (whole-line) over the symbol range.
+      --   recenter → run `zz` in the origin window on each hover (else cursor only).
+      follow = { enabled = true, hl = "Visual", recenter = true },
+
       -- Non-kind highlights. Kind highlights are in `kind_hl` below.
       hl = { chevron = "Comment", name = "Normal", lnum = "Comment" },
 
@@ -146,6 +156,7 @@ local function resolve_config(global, pcfg)
   return {
     initial_depth = pcfg.initial_depth,
     keys = pcfg.keys,
+    follow = pcfg.follow,
     chevron = pcfg.chevron,
     hl = pcfg.hl,
     icons = pcfg.icons,

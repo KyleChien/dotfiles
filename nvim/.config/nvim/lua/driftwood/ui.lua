@@ -6,8 +6,12 @@ local window = require("driftwood.window")
 
 local M = {}
 local ns = vim.api.nvim_create_namespace("driftwood")
+-- Separate namespace for the follow-mode highlight painted in the *origin*
+-- buffer (the outline lives in `ns` on the float buffer).
+local ns_follow = vim.api.nvim_create_namespace("driftwood_follow")
 
--- state = { win, buf, cfg, provider, roots, rows, origin_win }
+-- state = { win, buf, cfg, provider, roots, rows, origin_win, origin_buf,
+--           origin_view, follow_node }
 local state = nil
 
 -- Sticky-in-session layout: provider name -> last layout the user switched to.
@@ -83,6 +87,71 @@ end
 local function current_row()
   local line = vim.api.nvim_win_get_cursor(state.win)[1]
   return state.rows[line], line
+end
+
+-- ── follow mode (live preview into the origin window) ────────────────────────
+-- When cfg.follow.enabled, hovering a node paints its range in the origin buffer
+-- and moves the origin cursor there. Browsing is non-destructive: origin_view is
+-- snapshotted on open and restored on any close except a committing `jump`.
+
+local function follow_on()
+  return state and state.cfg.follow and state.cfg.follow.enabled
+end
+
+-- Wipe the follow highlight from the origin buffer.
+local function clear_follow()
+  local buf = state and state.origin_buf
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    vim.api.nvim_buf_clear_namespace(buf, ns_follow, 0, -1)
+  end
+end
+
+-- Restore the origin window's cursor+view to the snapshot taken on open.
+local function restore_origin_view()
+  if not (state and state.origin_view) then
+    return
+  end
+  local win = state.origin_win
+  if win and vim.api.nvim_win_is_valid(win) then
+    vim.api.nvim_win_call(win, function()
+      vim.fn.winrestview(state.origin_view)
+    end)
+  end
+end
+
+-- Preview `node` in the origin window: paint its full range whole-line, then
+-- place (and optionally recenter) the origin cursor on the symbol's name. Cached
+-- on state.follow_node so redundant CursorMoved fires are cheap no-ops.
+local function follow_preview(node)
+  if not follow_on() or not node or node == state.follow_node then
+    return
+  end
+  state.follow_node = node
+  local win, buf = state.origin_win, state.origin_buf
+  if not (win and vim.api.nvim_win_is_valid(win) and buf and vim.api.nvim_buf_is_valid(buf)) then
+    return
+  end
+
+  clear_follow()
+  local hl = state.cfg.follow.hl or "Visual"
+  local last = vim.api.nvim_buf_line_count(buf) - 1
+  local r = node.range
+  local s_line = math.max(0, math.min(r.start.line, last))
+  local e_line = math.max(s_line, math.min(r["end"].line, last))
+  for line = s_line, e_line do
+    vim.api.nvim_buf_set_extmark(buf, ns_follow, line, 0, { line_hl_group = hl })
+  end
+
+  local target = node.selection_range.start
+  local cur_line = math.max(0, math.min(target.line, last))
+  local line_text = vim.api.nvim_buf_get_lines(buf, cur_line, cur_line + 1, false)[1] or ""
+  local col = math.max(0, math.min(target.character, #line_text))
+  vim.api.nvim_win_call(win, function()
+    vim.api.nvim_win_set_cursor(win, { cur_line + 1, col })
+    if state.cfg.follow.recenter then
+      vim.cmd("normal! zz")
+    end
+  end)
 end
 
 -- ── actions (the rebindable behavior surface) ────────────────────────────────
@@ -231,13 +300,20 @@ function M.is_open()
   return state ~= nil and state.win and vim.api.nvim_win_is_valid(state.win)
 end
 
--- Close the float. When `restore` is true, refocus the origin window (the
--- origin cursor was never moved while browsing, so nothing else to restore).
+-- Close the float. Always wipe the follow highlight. When `restore` is true this
+-- is a cancel (q/Esc/toggle): snap the origin cursor+view back to the open-time
+-- snapshot and refocus origin. `restore = false` is used by `jump` (which sets
+-- its own cursor afterward) and by the WinLeave handler (which snaps back itself,
+-- without refocusing, to respect the user's new focus).
 function M.close(restore)
   if not state then
     return
   end
   local win, origin_win = state.win, state.origin_win
+  clear_follow()
+  if restore then
+    restore_origin_view()
+  end
   state = nil
   if win and vim.api.nvim_win_is_valid(win) then
     vim.api.nvim_win_close(win, true)
@@ -277,6 +353,16 @@ function M.open(provider, roots, cfg, origin)
   vim.wo[win].relativenumber = false
   vim.wo[win].signcolumn = "no"
 
+  -- Snapshot the origin window so follow-mode browsing can be undone on cancel.
+  local follow_enabled = cfg.follow and cfg.follow.enabled
+  local origin_buf = vim.api.nvim_win_get_buf(origin.win)
+  local origin_view
+  if follow_enabled and vim.api.nvim_win_is_valid(origin.win) then
+    origin_view = vim.api.nvim_win_call(origin.win, function()
+      return vim.fn.winsaveview()
+    end)
+  end
+
   state = {
     win = win,
     buf = buf,
@@ -285,11 +371,30 @@ function M.open(provider, roots, cfg, origin)
     roots = roots,
     rows = rows,
     origin_win = origin.win,
+    origin_buf = origin_buf,
+    origin_view = origin_view,
+    follow_node = nil,
   }
 
   render()
   set_keys(buf, cfg, provider)
   set_layout_keys(buf, cfg)
+
+  -- Follow-mode: preview the hovered node on every cursor move within the float.
+  if follow_enabled then
+    vim.api.nvim_create_autocmd("CursorMoved", {
+      buffer = buf,
+      callback = function()
+        if not state then
+          return
+        end
+        local row = current_row()
+        if row then
+          follow_preview(row.node)
+        end
+      end,
+    })
+  end
 
   local enclosing = tree.find_enclosing(roots, origin.pos[1] - 1, origin.pos[2])
   if enclosing then
@@ -298,11 +403,22 @@ function M.open(provider, roots, cfg, origin)
     vim.api.nvim_win_set_cursor(win, { 1, 0 })
   end
 
-  -- Close when the float loses focus (e.g. the user clicks another window).
+  -- Preview the initial selection immediately (CursorMoved may not have fired for
+  -- the programmatic placement above).
+  if follow_enabled then
+    local row = current_row()
+    if row then
+      follow_preview(row.node)
+    end
+  end
+
+  -- Close when the float loses focus (e.g. the user clicks another window). Snap
+  -- the origin view back first (without refocusing — the user chose a new window).
   vim.api.nvim_create_autocmd("WinLeave", {
     buffer = buf,
     once = true,
     callback = function()
+      restore_origin_view()
       M.close(false)
     end,
   })
