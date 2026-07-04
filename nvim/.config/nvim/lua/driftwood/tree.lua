@@ -1,7 +1,7 @@
--- symboltree.tree — pure tree logic (no Neovim window calls).
+-- driftwood.tree — pure tree logic (no Neovim window calls).
 -- Consumes normalized nodes, produces renderable rows and fold transitions.
 --
--- Node shape (from symboltree.lsp):
+-- Node shape (from a provider, e.g. driftwood.providers.symbols):
 --   { name, kind, range, selection_range, children, parent?, expanded? }
 
 local M = {}
