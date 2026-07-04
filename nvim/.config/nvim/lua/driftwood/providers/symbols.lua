@@ -90,9 +90,15 @@ end
 function M.render(row, cfg, layout)
   local node = row.node
   local indent = string.rep("  ", row.depth)
+  -- Prefer the row's fold flag (set by both flatten variants); under a filter it
+  -- can differ from node.expanded, which filtering never touches.
+  local open = row.expanded
+  if open == nil then
+    open = node.expanded
+  end
   local chevron
   if row.has_children then
-    chevron = node.expanded and cfg.chevron.expanded or cfg.chevron.collapsed
+    chevron = open and cfg.chevron.expanded or cfg.chevron.collapsed
   else
     chevron = " "
   end
@@ -101,13 +107,27 @@ function M.render(row, cfg, layout)
   local icon_part = icon .. " "
   local text = prefix .. icon_part .. node.name
 
+  -- Ancestor-only context rows (shown only because a descendant matched) render
+  -- dimmed so real matches stand out.
+  local search_hl = cfg.search and cfg.search.hl or {}
   local group = cfg.kind_hl[node.kind] or cfg.hl.name
+  if row.is_context and search_hl.context then
+    group = search_hl.context
+  end
   local spans = {}
   if row.has_children then
     spans[#spans + 1] = { #indent, #indent + #chevron, cfg.hl.chevron }
   end
+  local name_start = #prefix + #icon_part
   spans[#spans + 1] = { #prefix, #prefix + #icon, group }
-  spans[#spans + 1] = { #prefix + #icon_part, #text, group } -- name span (name-only length)
+  spans[#spans + 1] = { name_start, #text, group } -- name span (name-only length)
+
+  -- Highlight the matched substring inside the name (added last so it draws over
+  -- the name span). match_span is a 0-based byte range within the name.
+  if row.match_span and search_hl.match then
+    spans[#spans + 1] =
+      { name_start + row.match_span[1], name_start + row.match_span[2], search_hl.match }
+  end
 
   -- Per-layout extra content: append the symbol's line number when enabled.
   local lc = cfg.content and cfg.content[layout]

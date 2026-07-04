@@ -26,6 +26,7 @@ actually exists. Everything below is scoped by that discipline.
 | 6 | Public API | Nested `providers = { symbols = {…} }`; each provider owns its toggle `key` |
 | 7a | Layout persistence | Sticky **in-session** (module-level `last_layout[provider]`); resets on nvim restart |
 | 7b | Content freshness | Snapshot on open; no auto-refresh (reopen to refresh) |
+| 8 | Live filter | Permanent top-line search bar; `/` opens a **picker** (substring, smartcase) that collapses the outline to matches + ancestors; non-destructive to folds |
 
 ## Config boundary — window vs content
 
@@ -76,6 +77,18 @@ require("driftwood").setup({
       content = {                          -- coarse per-layout toggles read by the render fn
         right  = { show_lnum = false },
         center = { show_lnum = true },
+      },
+      search = {                           -- live filter (permanent top-line bar)
+        enabled = true,
+        key = "/",                         -- enters the picker
+        hint = "/ to filter",              -- idle bar text (virtual)
+        prompt = "/ ",                     -- glyph before the live query (virtual)
+        placeholder = "(no matches)",
+        keys = {                           -- picker-mode keys
+          next = { "<C-n>", "<Down>" }, prev = { "<C-p>", "<Up>" },
+          accept = "<CR>", abandon = "<Esc>",
+        },
+        hl = { match = "Search", context = "Comment", selection = "Visual" },
       },
       icons = { --[[ SymbolKind → glyph ]] },
       kind_hl = { --[[ SymbolKind → hl group ]] },
@@ -152,6 +165,24 @@ The shell (`window` + `render` + `tree`) never mentions symbols, LSP, or ranges.
   only `jump` (`<CR>`) commits and skips the restore. Node-cached on
   `state.follow_node` so redundant fires are no-ops. Disabled → no snapshot, no
   cursor move, no paint (zero behavior change).
+- **Live filter (`providers.symbols.search`):** the float reserves **buffer line
+  0** as a permanent search bar (tree shifts to lines 1..N; all row↔line math is
+  offset by one). Idle, the bar shows the `hint` as inline virtual text (advertises
+  the trigger). The `key` (`/`) enters a **picker**: line 0 becomes an editable,
+  empty prompt (`modifiable` flipped on, `startinsert`), the `prompt` glyph drawn
+  as inline virtual text so the buffer line holds *only* the query. A
+  `TextChangedI` autocmd re-filters on each edit via `tree.flatten_filtered`
+  (substring, **smartcase**), which keeps a matched node plus its **ancestor path**
+  (force-shown; ancestor-only rows flagged `is_context` and rendered dimmed, the
+  matched substring highlighted with `hl.match`). Filtering **never mutates
+  `node.expanded`**, so `abandon` restores the exact prior folds for free. The
+  selection is a separate `line_hl` extmark (the caret parks on the prompt) that
+  rides **result rows only** (context rows skipped); `next`/`prev` move it and
+  drive follow-mode preview (not `CursorMoved`, which stands down while picking).
+  `accept` (`<CR>`) jumps to the selection and closes; `abandon` (`<Esc>`) drops
+  back to the full tree, landing on the selected symbol — leaving the existing
+  normal-mode `<Esc>`=close intact (progressive escape). No matches → a dimmed
+  `placeholder` line, nothing selectable. Disabled → no bar, no key, zero change.
 
 ## Implementation sequence (safe, incremental)
 

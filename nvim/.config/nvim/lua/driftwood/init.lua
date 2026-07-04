@@ -81,6 +81,44 @@ M.config = {
       --   recenter → run `zz` in the origin window on each hover (else cursor only).
       follow = { enabled = true, hl = "Visual", recenter = true },
 
+      -- Live symbol filter. A permanent bar on the float's top line advertises the
+      -- trigger key; pressing it enters a picker: type to filter (substring,
+      -- smartcase), the outline collapses to matches + their ancestor path, and
+      -- the selection is driven with next/prev keys. accept jumps to the selected
+      -- symbol; abandon restores the full tree (folds intact — filtering never
+      -- mutates them). Follow mode previews the selected match as you move.
+      --   enabled → on/off switch for the whole feature.
+      --   key     → normal-mode key (inside the float) that enters the picker.
+      --   hint    → text shown in the bar when idle (advertises the feature).
+      --   prompt  → glyph drawn (as inline virtual text) before the live query.
+      --   keys    → picker-mode keys: next/prev move the selection, accept jumps,
+      --             abandon exits the filter. Each is a key or a list of keys.
+      search = {
+        enabled = true,
+        key = "/",
+        hint = "/ to filter",
+        prompt = "/ ",
+        placeholder = "(no matches)",
+        keys = {
+          next = { "<C-n>", "<Down>" },
+          prev = { "<C-p>", "<Up>" },
+          accept = "<CR>",
+          abandon = "<Esc>",
+        },
+        -- Filter highlights. match = matched substring, context = dimmed ancestor
+        -- rows, selection = the picker's selected row, hint/prompt/query = the bar,
+        -- placeholder = the "(no matches)" line.
+        hl = {
+          prompt = "Comment",
+          hint = "Comment",
+          query = "Normal",
+          match = "Search",
+          context = "Comment",
+          selection = "Visual",
+          placeholder = "Comment",
+        },
+      },
+
       -- Non-kind highlights. Kind highlights are in `kind_hl` below.
       hl = { chevron = "Comment", name = "Normal", lnum = "Comment" },
 
@@ -157,6 +195,7 @@ local function resolve_config(global, pcfg)
     initial_depth = pcfg.initial_depth,
     keys = pcfg.keys,
     follow = pcfg.follow,
+    search = pcfg.search,
     chevron = pcfg.chevron,
     hl = pcfg.hl,
     icons = pcfg.icons,
