@@ -9,6 +9,10 @@ M.config = {
   -- lazy-load trigger; keep the two in sync if you change it).
   keymap = ";",
 
+  -- How many levels to expand when the float opens: a non-negative integer
+  -- (0 = only top-level symbols, 1 = their direct children, …) or "all".
+  initial_depth = "all",
+
   -- action -> key (string) or keys (list). Actions live in symboltree.ui.
   keys = {
     down = "j",
@@ -45,7 +49,7 @@ M.config = {
     },
   },
 
-  chevron = { expanded = "", collapsed = "" },
+  chevron = { expanded = "▾", collapsed = "▸" },
 
   -- Non-kind highlights. Kind highlights are in `kind_hl` below.
   hl = { chevron = "Comment", name = "Normal" },

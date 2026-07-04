@@ -28,7 +28,7 @@ table so it can be extended later without touching the core.
 
 1. As a developer editing a long file, I want to press one key (`;`) to see the whole file's symbol outline, so that I can grasp its structure without scrolling.
 2. As a developer, I want the outline to appear in a floating window that takes focus, so that I can navigate it immediately without a window-switch step.
-3. As a developer, I want the tree to open **fully expanded**, so that the entire outline is scannable the instant it appears.
+3. As a developer, I want to configure **how many levels the tree expands** when it opens (default fully expanded), so that I can start from a high-level overview or the full outline as I prefer.
 4. As a developer, I want the cursor to land on the symbol that **encloses my current line** when the float opens, so that I'm oriented instantly and often one keypress from my destination.
 5. As an nvim-tree user, I want `j`/`k` to move down/up across **every visible row** regardless of depth, so that navigation matches muscle memory I already have.
 6. As a developer, I want `l` to **expand** a collapsed branch, so that I can reveal a symbol's children on demand.
@@ -97,9 +97,12 @@ table so it can be extended later without touching the core.
   the float, and jumps the origin window to `selection_range.start`. `zR`/`zM`
   expand-all / collapse-all and re-render.
 
-- **Open state:** fully expanded; cursor set to the row whose node's `range`
-  contains the origin cursor position (deepest enclosing match), falling back
-  to row 1.
+- **Open state:** expanded to `opts.initial_depth` levels — a non-negative
+  integer (`0` = top-level symbols only, `1` = their direct children, …) or
+  `"all"` (default) for fully expanded. Resolved in the pure `tree.prepare`.
+  Cursor set to the row whose node's `range` contains the origin cursor position
+  (deepest enclosing match); if that node is hidden under a collapsed ancestor,
+  the cursor climbs to the nearest visible ancestor, falling back to row 1.
 
 - **Toggle & restore:** `toggle()` opens+focuses if closed, closes if already
   open. On close-without-jump, the origin window and cursor are restored. The

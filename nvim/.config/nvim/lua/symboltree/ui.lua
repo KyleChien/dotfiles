@@ -338,7 +338,7 @@ end
 -- Open the float for `roots`, focus it, and place the cursor on the symbol that
 -- encloses `origin.pos` (a 1-based {line, col} from nvim_win_get_cursor).
 function M.open(roots, cfg, origin)
-  tree.prepare(roots)
+  tree.prepare(roots, cfg.initial_depth)
 
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "wipe"

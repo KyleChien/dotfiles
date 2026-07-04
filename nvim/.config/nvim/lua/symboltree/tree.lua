@@ -6,18 +6,27 @@
 
 local M = {}
 
--- Annotate the tree in place: link each node to its parent and start expanded.
-function M.prepare(roots)
-  local function walk(nodes, parent)
+-- Annotate the tree in place: link each node to its parent and set the initial
+-- fold state. `initial_depth` is how many levels to expand — a non-negative
+-- integer, or "all"/true/nil for everything. A branch at depth d is expanded
+-- when d < max_depth, so `initial_depth = 0` shows only top-level symbols, `1`
+-- shows their direct children, and so on.
+function M.prepare(roots, initial_depth)
+  local max_depth = math.huge
+  if type(initial_depth) == "number" then
+    max_depth = math.max(0, math.floor(initial_depth))
+  end
+  local function walk(nodes, parent, depth)
     for _, node in ipairs(nodes) do
       node.parent = parent
-      node.expanded = true
-      if node.children then
-        walk(node.children, node)
+      local has_children = node.children ~= nil and #node.children > 0
+      node.expanded = has_children and depth < max_depth
+      if has_children then
+        walk(node.children, node, depth + 1)
       end
     end
   end
-  walk(roots, nil)
+  walk(roots, nil, 0)
 end
 
 -- Flatten the tree into the list of currently-visible rows, honoring fold state.

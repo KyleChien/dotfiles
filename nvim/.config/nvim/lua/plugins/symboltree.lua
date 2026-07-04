@@ -6,7 +6,10 @@ return {
 	name = "symboltree",
 	lazy = true,
 	keys = { ";" }, -- lhs-only trigger; the real mapping is set in config()
-	config = function()
-		require("symboltree").setup()
+	opts = {
+		initial_depth = 1,
+	},
+	config = function(_, opts)
+		require("symboltree").setup(opts)
 	end,
 }
