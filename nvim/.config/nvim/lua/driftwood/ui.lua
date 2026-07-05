@@ -11,8 +11,8 @@ local ns = vim.api.nvim_create_namespace("driftwood")
 local ns_follow = vim.api.nvim_create_namespace("driftwood_follow")
 -- The search bar's inline virtual text (prompt glyph / idle hint) on line 0.
 local ns_bar = vim.api.nvim_create_namespace("driftwood_bar")
--- The picker's selected-row highlight. Its own namespace so the selection can be
--- repainted (on <C-n>/<C-p>) without touching the content highlights in `ns`.
+-- The first-match highlight painted while typing a query. Its own namespace so it
+-- can be repainted on each keystroke without touching the content highlights in `ns`.
 local ns_sel = vim.api.nvim_create_namespace("driftwood_sel")
 
 -- The float reserves buffer line 0 for the search bar; the tree occupies lines
@@ -21,7 +21,16 @@ local ns_sel = vim.api.nvim_create_namespace("driftwood_sel")
 --
 -- state = { win, buf, cfg, provider, roots, rows, origin_win, origin_buf,
 --           origin_view, follow_node,
---           filter = { active, query, sel }, picker_aucmds, rendering }
+--           filter = { query, sel, typing }, search_aucmds, search_maps, rendering }
+--
+-- The live filter has three states, keyed off `filter`:
+--   1. unfiltered      — query == "", not typing: the full fold-honoring tree.
+--   2. typing (insert) — typing == true: line 0 is an editable prompt, the tree
+--      narrows live on each keystroke, the first match is highlighted+previewed.
+--   3. filtered (normal) — query ~= "", not typing: the narrowed tree is browsed
+--      with the *real* cursor (j/k), exactly like the unfiltered tree.
+-- `/` moves 1→2 (and 3→2 to refine); <CR> in 2 jumps to the first match; <Esc>
+-- in 2 hands the cursor to the tree (2→3); <Esc> in 3 clears the filter (3→1).
 local state = nil
 
 -- Sticky-in-session layout: provider name -> last layout the user switched to.
@@ -54,16 +63,23 @@ local function content_dims(lines)
   return w + 2, #lines
 end
 
--- Is the live filter currently accepting input?
-local function picker_active()
-  return state and state.filter and state.filter.active
+-- Is a filter query in effect (states 2 & 3)? Drives filtered flatten, the bar
+-- prompt, and whether fold ops must stand down to keep folds intact.
+local function filtering()
+  return state and state.filter and state.filter.query ~= ""
 end
 
--- The rows to display: filtered when a non-empty query is active, else the full
--- fold-honoring tree. Filtering never mutates node.expanded, so clearing the
+-- Is the editable prompt currently open (state 2)? Only then is line 0 editable,
+-- the caret pinned to the bar, and the first-match highlight painted.
+local function typing()
+  return state and state.filter and state.filter.typing
+end
+
+-- The rows to display: filtered when a non-empty query is in effect, else the
+-- full fold-honoring tree. Filtering never mutates node.expanded, so clearing the
 -- query restores the exact prior folds.
 local function compute_rows()
-  if picker_active() and state.filter.query ~= "" then
+  if filtering() then
     return tree.flatten_filtered(state.roots, state.filter.query)
   end
   return tree.flatten(state.roots)
@@ -80,7 +96,9 @@ local function paint_bar()
   end
   local shl = search.hl or {}
   local text, group
-  if picker_active() then
+  -- Prompt glyph whenever a query is being typed (2) or is applied (3); the idle
+  -- hint only in the unfiltered state (1).
+  if typing() or filtering() then
     text, group = search.prompt or "", shl.prompt or "Comment"
   else
     text, group = search.hint or "", shl.hint or "Comment"
@@ -94,11 +112,13 @@ local function paint_bar()
   end
 end
 
--- Paint the picker's selected-row highlight (whole line) over the selected tree
--- row. No-op when not filtering or when there are no matches.
+-- Paint the first-match highlight (whole line) while typing (state 2): the caret
+-- sits on the bar, so this marks the row <CR> will jump to and follow previews.
+-- In the filtered-normal state (3) the real cursor + cursorline shows position,
+-- so this stands down.
 local function paint_selection()
   vim.api.nvim_buf_clear_namespace(state.buf, ns_sel, 0, -1)
-  if not picker_active() then
+  if not typing() then
     return
   end
   local sel = state.filter.sel
@@ -117,7 +137,7 @@ local function bar_width()
   if not (search and search.enabled) then
     return 0
   end
-  if picker_active() then
+  if typing() or filtering() then
     return vim.fn.strdisplaywidth((search.prompt or "") .. state.filter.query)
   end
   return vim.fn.strdisplaywidth(search.hint or "")
@@ -143,7 +163,7 @@ local function render_rows(bar_text, keep_bar_line)
   local shl = (cfg.search and cfg.search.hl) or {}
 
   local tree_lines, spans = {}, {}
-  local no_match = picker_active() and state.filter.query ~= "" and #state.rows == 0
+  local no_match = filtering() and #state.rows == 0
   if no_match then
     local ph = "  " .. ((cfg.search and cfg.search.placeholder) or "(no matches)")
     tree_lines[1] = ph
@@ -163,7 +183,7 @@ local function render_rows(bar_text, keep_bar_line)
     vim.list_extend(all, tree_lines)
     vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, all)
   end
-  vim.bo[state.buf].modifiable = picker_active() and true or false
+  vim.bo[state.buf].modifiable = typing() and true or false
   state.rendering = false
 
   vim.api.nvim_buf_clear_namespace(state.buf, ns, 0, -1)
@@ -180,9 +200,11 @@ local function render_rows(bar_text, keep_bar_line)
 end
 
 -- Full render: rewrite line 0 (bar) and the tree, and repaint the bar's virtual
--- text. Used on open, layout switch, and entering/leaving the picker.
+-- text. Used on open, layout switch, and entering/leaving the filter. Line 0 is
+-- the current query (empty in the unfiltered state, so the bar reads blank and
+-- the hint is drawn as virtual text over it).
 local function render()
-  render_rows(picker_active() and state.filter.query or "", false)
+  render_rows(state.filter.query, false)
   paint_bar()
 end
 
@@ -294,6 +316,12 @@ function actions.up()
 end
 
 function actions.expand()
+  -- Under a filter, matches are force-shown regardless of fold state, so folding
+  -- is inert; mutating node.expanded here would also corrupt the folds we promise
+  -- to restore on clear. Stand down (the row is already as expanded as it gets).
+  if filtering() then
+    return
+  end
   local row = current_row()
   if row and row.has_children and not row.node.expanded then
     row.node.expanded = true
@@ -307,6 +335,14 @@ function actions.collapse()
   if not row then
     return
   end
+  -- Under a filter, don't touch folds (see actions.expand); keep only the useful
+  -- "hop to parent" navigation.
+  if filtering() then
+    if row.node.parent then
+      move_cursor_to_node(row.node.parent)
+    end
+    return
+  end
   if row.has_children and row.node.expanded then
     row.node.expanded = false
     render()
@@ -317,6 +353,9 @@ function actions.collapse()
 end
 
 function actions.expand_all()
+  if filtering() then -- folds are inert under a filter; leave them intact
+    return
+  end
   local row = current_row()
   tree.set_expanded_all(state.roots, true)
   render()
@@ -326,6 +365,9 @@ function actions.expand_all()
 end
 
 function actions.collapse_all()
+  if filtering() then -- folds are inert under a filter; leave them intact
+    return
+  end
   local row = current_row()
   tree.set_expanded_all(state.roots, false)
   render()
@@ -338,16 +380,19 @@ function actions.close()
   M.close(true)
 end
 
--- ── live filter (picker mode) ────────────────────────────────────────────────
+-- ── live filter ──────────────────────────────────────────────────────────────
 -- Entered from normal tree navigation via the search key. Buffer line 0 becomes
--- an editable prompt: typing filters the outline to matches + their ancestor
--- path; the selection is moved with next/prev keys and previewed via follow mode.
--- accept jumps to the selected symbol; abandon restores the full fold-honoring
--- tree (folds intact — filtering never mutates them).
+-- an editable prompt (state 2): typing narrows the outline live to matches + their
+-- ancestor path, and the first match is highlighted + previewed. <CR> jumps to it;
+-- <Esc> hands the *real* cursor to the narrowed tree (state 3), where j/k/l/h and
+-- <CR> behave exactly as in the unfiltered outline. A second <Esc> (in normal
+-- mode) clears the filter and restores the full fold-honoring tree — folds intact,
+-- since filtering never mutates node.expanded. `/` from state 3 re-opens the
+-- prompt (pre-filled) to refine.
 
--- Selection rides only match rows; ancestor-context rows are skipped (they exist
--- for hierarchy, not as results). Empty-query rows carry no is_context flag and
--- so all count as selectable.
+-- The "first match" tracked while typing rides only real match rows; ancestor-
+-- context rows are skipped (they exist for hierarchy, not as results). Empty-query
+-- rows carry no is_context flag and so all count.
 local function is_result(row)
   return row and not row.is_context
 end
@@ -364,25 +409,23 @@ local function scan_result(from, dir)
   return nil
 end
 
--- Move the selection to the next/prev result (dir = +1/-1). No wrap.
-local function picker_move(dir)
-  if not picker_active() or #state.rows == 0 then
-    return
+-- Drop the prompt's insert-mode maps and autocommands (leaving the typing state).
+local function search_teardown()
+  for _, id in ipairs(state.search_aucmds or {}) do
+    pcall(vim.api.nvim_del_autocmd, id)
   end
-  local i = scan_result(state.filter.sel + dir, dir)
-  if i then
-    state.filter.sel = i
-    paint_selection()
-    if follow_on() then
-      follow_preview(state.rows[i].node)
-    end
+  state.search_aucmds = nil
+  for _, lhs in ipairs(state.search_maps or {}) do
+    pcall(vim.keymap.del, "i", lhs, { buffer = state.buf })
   end
+  state.search_maps = nil
 end
 
--- Re-run the filter from the prompt text (line 0) after an edit. Guarded on the
--- query actually changing so our own tree rewrites can't feed back into a loop.
-local function picker_update()
-  if not picker_active() then
+-- Re-run the filter from the prompt text (line 0) after an edit, tracking the
+-- first match for the highlight/preview. Guarded on the query actually changing so
+-- our own tree rewrites can't feed back into a loop.
+local function search_update()
+  if not typing() then
     return
   end
   local q = vim.api.nvim_buf_get_lines(state.buf, 0, 1, false)[1] or ""
@@ -399,13 +442,19 @@ local function picker_update()
   end
 end
 
--- Jump to the selected match (commit), closing the float.
-local function picker_accept()
+-- <CR> while typing: jump straight to the first match (commit). No-op with no
+-- matches, leaving the user in the prompt to keep editing.
+local function search_accept()
+  if not typing() then
+    return
+  end
   local row = state.rows[state.filter.sel]
-  if not row then
+  if not row or not is_result(row) then
     return
   end
   vim.cmd("stopinsert")
+  search_teardown()
+  state.filter.typing = false
   local jump = state.provider.actions and state.provider.actions.jump
   if jump then
     jump({ node = row.node, origin_win = state.origin_win, close = M.close })
@@ -414,34 +463,21 @@ local function picker_accept()
   end
 end
 
--- Drop the picker's insert-mode maps and autocommands.
-local function picker_teardown()
-  for _, id in ipairs(state.picker_aucmds or {}) do
-    pcall(vim.api.nvim_del_autocmd, id)
-  end
-  state.picker_aucmds = nil
-  for _, lhs in ipairs(state.picker_maps or {}) do
-    pcall(vim.keymap.del, "i", lhs, { buffer = state.buf })
-  end
-  state.picker_maps = nil
-end
-
--- Leave the picker and restore the full tree, landing on the selected symbol.
-local function picker_abandon()
-  if not picker_active() then
+-- <Esc> while typing: hand the real cursor to the tree. With matches, keep the
+-- filter and browse the narrowed outline (state 3), landing on the first match.
+-- With an empty query, fall back to the plain unfiltered tree (state 1).
+local function search_handoff()
+  if not typing() then
     return
   end
   local sel = state.rows[state.filter.sel]
-  local node = sel and sel.node
   vim.cmd("stopinsert")
-  picker_teardown()
-  state.filter.active = false
-  state.filter.query = ""
-  state.filter.sel = 1
+  search_teardown()
+  state.filter.typing = false
   vim.wo[state.win].cursorline = true
-  render()
-  if node then
-    move_cursor_to_node(node)
+  render() -- drops modifiable, repaints the bar as static query (or the idle hint)
+  if state.filter.query ~= "" and sel then
+    move_cursor_to_node(sel.node)
   else
     local last = vim.api.nvim_buf_line_count(state.buf)
     vim.api.nvim_win_set_cursor(state.win, { math.min(2, last), 0 })
@@ -454,20 +490,45 @@ local function picker_abandon()
   end
 end
 
--- Enter the picker: make line 0 an editable, empty prompt and start insert mode.
-local function picker_enter()
-  local search = state.cfg.search
-  if not (search and search.enabled) or picker_active() then
-    return
-  end
-  state.filter.active = true
+-- <Esc> while browsing a filtered tree (state 3): clear the filter and restore the
+-- full fold-honoring tree, landing on the symbol under the cursor (climbing to its
+-- nearest visible ancestor if it was a context-only row).
+local function search_clear()
+  local row = current_row()
+  local node = row and row.node
   state.filter.query = ""
   state.filter.sel = 1
-  vim.wo[state.win].cursorline = false -- caret parks on the bar; selection is its own hl
-  render() -- redraw bar as a prompt + full tree, with line 0 emptied
+  render()
+  if node then
+    move_cursor_to_node(node)
+  else
+    local last = vim.api.nvim_buf_line_count(state.buf)
+    vim.api.nvim_win_set_cursor(state.win, { math.min(2, last), 0 })
+  end
+  if follow_on() then
+    local r = current_row()
+    if r then
+      follow_preview(r.node)
+    end
+  end
+end
+
+-- Open the editable prompt (state 1 or 3 → 2). Keeps the existing query so `/`
+-- from the filtered state refines it; starts insert mode with the caret at the end
+-- of the (possibly pre-filled) query.
+local function search_enter()
+  local search = state.cfg.search
+  if not (search and search.enabled) or typing() then
+    return
+  end
+  state.filter.typing = true
+  vim.wo[state.win].cursorline = false -- caret parks on the bar; first match is its own hl
+  render() -- redraw bar as a prompt + the (possibly pre-filled) query on line 0
+  state.filter.sel = scan_result(1, 1) or 1
+  paint_selection()
 
   local keys = search.keys or {}
-  state.picker_maps = {}
+  state.search_maps = {}
   local function imap(spec, fn)
     if spec == nil then
       return
@@ -477,28 +538,22 @@ local function picker_enter()
     end
     for _, lhs in ipairs(spec) do
       vim.keymap.set("i", lhs, fn, { buffer = state.buf, nowait = true, silent = true })
-      state.picker_maps[#state.picker_maps + 1] = lhs
+      state.search_maps[#state.search_maps + 1] = lhs
     end
   end
-  imap(keys.next, function()
-    picker_move(1)
-  end)
-  imap(keys.prev, function()
-    picker_move(-1)
-  end)
-  imap(keys.accept, picker_accept)
-  imap(keys.abandon, picker_abandon)
+  imap(keys.accept, search_accept)
+  imap(keys.abandon, search_handoff)
 
-  state.picker_aucmds = {
+  state.search_aucmds = {
     vim.api.nvim_create_autocmd({ "TextChangedI", "TextChanged" }, {
       buffer = state.buf,
-      callback = picker_update,
+      callback = search_update,
     }),
     -- Pin the caret to the prompt line so edits can't stray into the tree.
     vim.api.nvim_create_autocmd("CursorMovedI", {
       buffer = state.buf,
       callback = function()
-        if picker_active() and vim.api.nvim_win_get_cursor(state.win)[1] ~= 1 then
+        if typing() and vim.api.nvim_win_get_cursor(state.win)[1] ~= 1 then
           local q = vim.api.nvim_buf_get_lines(state.buf, 0, 1, false)[1] or ""
           vim.api.nvim_win_set_cursor(state.win, { 1, #q })
         end
@@ -506,10 +561,10 @@ local function picker_enter()
     }),
   }
 
-  vim.api.nvim_win_set_cursor(state.win, { 1, 0 })
+  vim.api.nvim_win_set_cursor(state.win, { 1, #state.filter.query })
   vim.cmd("startinsert!")
-  if follow_on() and state.rows[1] then
-    follow_preview(state.rows[1].node)
+  if follow_on() and state.rows[state.filter.sel] then
+    follow_preview(state.rows[state.filter.sel].node)
   end
 end
 
@@ -605,9 +660,9 @@ function M.close(restore)
   if not state then
     return
   end
-  if picker_active() then
+  if typing() then
     pcall(vim.cmd, "stopinsert")
-    picker_teardown()
+    search_teardown()
   end
   local win, origin_win = state.win, state.origin_win
   clear_follow()
@@ -638,9 +693,8 @@ function M.open(provider, roots, cfg, origin)
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].filetype = "driftwood"
   -- Suppress the completion popup while filtering: the float only enters insert
-  -- mode for the search picker, and there's nothing here to complete. blink.cmp
-  -- (and most engines) treat this buffer var as an off switch; it also frees the
-  -- picker's <C-n>/<C-p>/<Up>/<Down> from blink's menu-selection keymaps.
+  -- mode for the search prompt, and there's nothing here to complete. blink.cmp
+  -- (and most engines) treat this buffer var as an off switch.
   vim.b[buf].completion = false
 
   local rows = tree.flatten(roots)
@@ -679,30 +733,42 @@ function M.open(provider, roots, cfg, origin)
     origin_buf = origin_buf,
     origin_view = origin_view,
     follow_node = nil,
-    filter = { active = false, query = "", sel = 1 },
+    filter = { query = "", sel = 1, typing = false },
   }
 
   render()
   set_keys(buf, cfg, provider)
   set_layout_keys(buf, cfg)
 
-  -- Search: bind the trigger key that enters the live-filter picker.
-  if cfg.search and cfg.search.enabled and cfg.search.key then
-    vim.keymap.set("n", cfg.search.key, picker_enter, {
-      buffer = buf,
-      nowait = true,
-      silent = true,
-    })
+  if cfg.search and cfg.search.enabled then
+    -- `/` opens the editable prompt (state 1/3 → 2).
+    if cfg.search.key then
+      vim.keymap.set("n", cfg.search.key, search_enter, {
+        buffer = buf,
+        nowait = true,
+        silent = true,
+      })
+    end
+    -- Normal-mode <Esc> peels one layer: clear an applied filter first (state
+    -- 3 → 1), otherwise close the float. (q and ; always close directly — they're
+    -- bound by set_keys and left untouched here.)
+    vim.keymap.set("n", "<Esc>", function()
+      if filtering() then
+        search_clear()
+      else
+        M.close(true)
+      end
+    end, { buffer = buf, nowait = true, silent = true })
   end
 
   -- Follow-mode: preview the hovered node on every cursor move within the float.
-  -- While the picker is active the caret sits on the bar and follow is driven by
-  -- selection moves instead, so this normal-mode handler stands down.
+  -- While the prompt is open (state 2) the caret sits on the bar and follow is
+  -- driven by the live query instead, so this normal-mode handler stands down.
   if follow_enabled then
     vim.api.nvim_create_autocmd("CursorMoved", {
       buffer = buf,
       callback = function()
-        if not state or picker_active() then
+        if not state or typing() then
           return
         end
         local row = current_row()

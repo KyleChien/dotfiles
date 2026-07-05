@@ -26,7 +26,7 @@ actually exists. Everything below is scoped by that discipline.
 | 6 | Public API | Nested `providers = { symbols = {…} }`; each provider owns its toggle `key` |
 | 7a | Layout persistence | Sticky **in-session** (module-level `last_layout[provider]`); resets on nvim restart |
 | 7b | Content freshness | Snapshot on open; no auto-refresh (reopen to refresh) |
-| 8 | Live filter | Permanent top-line search bar; `/` opens a **picker** (substring, smartcase) that collapses the outline to matches + ancestors; non-destructive to folds |
+| 8 | Live filter | Permanent top-line search bar; `/` opens an editable prompt (substring, smartcase) that narrows the outline live to matches + ancestors; `<CR>` jumps to the first match, `<Esc>` hands the **real cursor** to the narrowed tree (`j/k/l/h` browse it as normal); a second `<Esc>` clears the filter; non-destructive to folds |
 
 ## Config boundary — window vs content
 
@@ -80,13 +80,13 @@ require("driftwood").setup({
       },
       search = {                           -- live filter (permanent top-line bar)
         enabled = true,
-        key = "/",                         -- enters the picker
+        key = "/",                         -- opens the editable prompt
         hint = "/ to filter",              -- idle bar text (virtual)
         prompt = "/ ",                     -- glyph before the live query (virtual)
         placeholder = "(no matches)",
-        keys = {                           -- picker-mode keys
-          next = { "<C-n>", "<Down>" }, prev = { "<C-p>", "<Up>" },
-          accept = "<CR>", abandon = "<Esc>",
+        keys = {                           -- prompt (insert-mode) keys
+          accept = "<CR>",                 -- jump to the first match
+          abandon = "<Esc>",               -- hand off to normal-mode browsing
         },
         hl = { match = "Search", context = "Comment", selection = "Visual" },
       },
@@ -167,22 +167,32 @@ The shell (`window` + `render` + `tree`) never mentions symbols, LSP, or ranges.
   cursor move, no paint (zero behavior change).
 - **Live filter (`providers.symbols.search`):** the float reserves **buffer line
   0** as a permanent search bar (tree shifts to lines 1..N; all row↔line math is
-  offset by one). Idle, the bar shows the `hint` as inline virtual text (advertises
-  the trigger). The `key` (`/`) enters a **picker**: line 0 becomes an editable,
-  empty prompt (`modifiable` flipped on, `startinsert`), the `prompt` glyph drawn
-  as inline virtual text so the buffer line holds *only* the query. A
-  `TextChangedI` autocmd re-filters on each edit via `tree.flatten_filtered`
-  (substring, **smartcase**), which keeps a matched node plus its **ancestor path**
-  (force-shown; ancestor-only rows flagged `is_context` and rendered dimmed, the
-  matched substring highlighted with `hl.match`). Filtering **never mutates
-  `node.expanded`**, so `abandon` restores the exact prior folds for free. The
-  selection is a separate `line_hl` extmark (the caret parks on the prompt) that
-  rides **result rows only** (context rows skipped); `next`/`prev` move it and
-  drive follow-mode preview (not `CursorMoved`, which stands down while picking).
-  `accept` (`<CR>`) jumps to the selection and closes; `abandon` (`<Esc>`) drops
-  back to the full tree, landing on the selected symbol — leaving the existing
-  normal-mode `<Esc>`=close intact (progressive escape). No matches → a dimmed
-  `placeholder` line, nothing selectable. Disabled → no bar, no key, zero change.
+  offset by one). It has three states, keyed off `state.filter = { query, sel,
+  typing }`:
+  1. **Unfiltered** (`query == ""`, not typing): the full fold-honoring tree; the
+     bar shows the `hint` as inline virtual text.
+  2. **Typing** (`typing == true`): the `key` (`/`) opens the prompt — line 0
+     becomes editable (`modifiable` on, `startinsert`), the `prompt` glyph drawn as
+     inline virtual text so the buffer line holds *only* the query. A `TextChangedI`
+     autocmd re-filters on each edit via `tree.flatten_filtered` (substring,
+     **smartcase**), keeping a matched node plus its **ancestor path** (force-shown;
+     ancestor-only rows flagged `is_context`, rendered dimmed; matched substring in
+     `hl.match`). The **first match** is highlighted (a `line_hl` extmark, the caret
+     parks on the prompt) and follow-previewed. `accept` (`<CR>`) jumps to that first
+     match and closes; `abandon` (`<Esc>`) hands off to state 3.
+  3. **Filtered-normal** (`query ~= ""`, not typing): the narrowed tree is browsed
+     with the **real cursor** — `j/k/l/h` and `<CR>` (jump) behave exactly as in the
+     unfiltered tree, `CursorMoved` drives follow-mode. The bar shows the applied
+     query as static line-0 text. Fold ops (`l/h/zR/zM`) stand down here so they
+     can't mutate `node.expanded` (`h` still hops to parent as navigation). `/`
+     re-opens the prompt **pre-filled** to refine.
+
+  Filtering **never mutates `node.expanded`**, so clearing restores the exact prior
+  folds for free. The normal-mode `<Esc>` **peels one layer**: with a filter applied
+  (state 3) it clears the filter → full tree (landing on the browsed symbol); with
+  none (state 1) it closes the float. `q`/`;` always close directly. No matches → a
+  dimmed `placeholder` line, nothing to jump to. Disabled → no bar, no key, no
+  `<Esc>` override, zero change.
 
 ## Implementation sequence (safe, incremental)
 
