@@ -26,7 +26,7 @@ actually exists. Everything below is scoped by that discipline.
 | 6 | Public API | Nested `providers = { symbols = {…} }`; each provider owns its toggle `key` |
 | 7a | Layout persistence | Sticky **in-session** (module-level `last_layout[provider]`); resets on nvim restart |
 | 7b | Content freshness | Snapshot on open; no auto-refresh (reopen to refresh) |
-| 8 | Live filter | Permanent top-line search bar; `/` opens an editable prompt (substring, smartcase) that narrows the outline live to matches + ancestors; `<CR>` jumps to the first match, `<Esc>` hands the **real cursor** to the narrowed tree (`j/k/l/h` browse it as normal); a second `<Esc>` clears the filter; non-destructive to folds |
+| 8 | Live filter | Permanent top-line search bar; `/` opens an editable prompt that narrows the outline live to matches + ancestors. Query is a name substring (smartcase) or `@kind` (prefix over SymbolKind names, `@function foo` ANDs a name). `<CR>` jumps to the first match, `<Esc>` hands the **real cursor** to the narrowed tree (`j/k/l/h` browse it as normal); a second `<Esc>` clears the filter; non-destructive to folds |
 
 ## Config boundary — window vs content
 
@@ -71,7 +71,7 @@ require("driftwood").setup({
       keys = {
         down = "j", up = "k", expand = "l", collapse = "h",
         jump = "<CR>", expand_all = "zR", collapse_all = "zM",
-        close = { "q", "<Esc>", ";" },
+        close = { "q", ";" },
       },
       layouts = { right = { width = 30 } }, -- per-provider geometry override
       content = {                          -- coarse per-layout toggles read by the render fn
@@ -138,6 +138,7 @@ A provider supplies, informally (no enforced interface yet):
 - `fetch(bufnr, cb)` → calls back with a node tree (or nil).
 - `render(row, layout, cfg)` → `text, segments` — the layout-aware line builder.
 - `actions` — its action table (`jump` etc.); the generic `down/up/expand/collapse/close` live in the shell.
+- `make_matcher(query)` → `fn(node) -> false | { span }` — the live-filter predicate. The shell force-shows matched nodes + ancestors; `span` is an optional 0-based name-highlight range (nil for a match with nothing to underline). Provider-owned because only it knows what a `SymbolKind` is named.
 - static tables: `icons`, `kind_hl`, defaults.
 
 The shell (`window` + `render` + `tree`) never mentions symbols, LSP, or ranges.
@@ -171,11 +172,17 @@ The shell (`window` + `render` + `tree`) never mentions symbols, LSP, or ranges.
   typing }`:
   1. **Unfiltered** (`query == ""`, not typing): the full fold-honoring tree; the
      bar shows the `hint` as inline virtual text.
-  2. **Typing** (`typing == true`): the `key` (`/`) opens the prompt — line 0
+  2. **Typing** (`typing == true`): the `key` (`/`) opens the prompt (the provider's
+     kind sigil `@` opens the same prompt pre-seeded with `@`, so kind mode is one
+     keystroke away) — line 0
      becomes editable (`modifiable` on, `startinsert`), the `prompt` glyph drawn as
      inline virtual text so the buffer line holds *only* the query. A `TextChangedI`
-     autocmd re-filters on each edit via `tree.flatten_filtered` (substring,
-     **smartcase**), keeping a matched node plus its **ancestor path** (force-shown;
+     autocmd re-filters on each edit via `tree.flatten_filtered`, driven by the
+     provider's `make_matcher(query)`. Two forms: a bare **name substring**
+     (smartcase), or `@kind` — the token after `@` is a case-insensitive **prefix**
+     over `SymbolKind` names, unioned across every kind it prefixes (`@c` →
+     Class/Constructor/Constant), and an optional trailing name substring is ANDed
+     (`@function foo`). Either keeps a matched node plus its **ancestor path** (force-shown;
      ancestor-only rows flagged `is_context`, rendered dimmed; matched substring in
      `hl.match`). The **first match** is highlighted (a `line_hl` extmark, the caret
      parks on the prompt) and follow-previewed. `accept` (`<CR>`) jumps to that first
@@ -188,9 +195,9 @@ The shell (`window` + `render` + `tree`) never mentions symbols, LSP, or ranges.
      re-opens the prompt **pre-filled** to refine.
 
   Filtering **never mutates `node.expanded`**, so clearing restores the exact prior
-  folds for free. The normal-mode `<Esc>` **peels one layer**: with a filter applied
-  (state 3) it clears the filter → full tree (landing on the browsed symbol); with
-  none (state 1) it closes the float. `q`/`;` always close directly. No matches → a
+  folds for free. The normal-mode `<Esc>` clears an applied filter (state 3 → full
+  tree, landing on the browsed symbol); with no filter it's a no-op — it does **not**
+  close the float. Only `q`/`;` close. No matches → a
   dimmed `placeholder` line, nothing to jump to. Disabled → no bar, no key, no
   `<Esc>` override, zero change.
 

@@ -4,9 +4,12 @@
 -- shell (window / render loop / tree) knows none of this.
 --
 -- Provider contract (informal — see docs/driftwood-design.md, approach A):
---   fetch(bufnr, cb)   → cb(roots) with a node tree, or cb(nil) if empty.
---   render(row, cfg)   → text, spans  where spans = { {s_col, e_col, group}, … }.
---   actions[name](ctx) → provider-specific action; ctx = { node, origin_win, close }.
+--   fetch(bufnr, cb)     → cb(roots) with a node tree, or cb(nil) if empty.
+--   render(row, cfg)     → text, spans  where spans = { {s_col, e_col, group}, … }.
+--   actions[name](ctx)   → provider-specific action; ctx = { node, origin_win, close }.
+--   make_matcher(query)  → fn(node) -> false | { span }; the live-filter predicate
+--                          (see the filter section below). Symbol-specific because
+--                          only the provider knows what a SymbolKind is named.
 
 local M = {}
 
@@ -80,6 +83,112 @@ function M.fetch(bufnr, cb)
       cb(merged)
     end
   end)
+end
+
+-- ── filter matcher: query -> per-node predicate ─────────────────────────────
+-- The live filter (driftwood.ui / tree.flatten_filtered) is provider-agnostic: it
+-- asks the provider for a matcher and force-shows every matched node plus its
+-- ancestor path. A matcher maps a node to `false` (no match) or `{ span }`, where
+-- `span` is a 0-based byte range within the name to highlight (nil for a match with
+-- nothing to underline, e.g. a kind-only filter). Decoupling match-ness from `span`
+-- is what lets a kind match be a real result without a highlighted substring.
+
+-- Canonical SymbolKind (LSP numeric) -> display name, used only for kind filtering.
+local KIND_NAMES = {
+  [1] = "File",
+  [2] = "Module",
+  [3] = "Namespace",
+  [4] = "Package",
+  [5] = "Class",
+  [6] = "Method",
+  [7] = "Property",
+  [8] = "Field",
+  [9] = "Constructor",
+  [10] = "Enum",
+  [11] = "Interface",
+  [12] = "Function",
+  [13] = "Variable",
+  [14] = "Constant",
+  [15] = "String",
+  [16] = "Number",
+  [17] = "Boolean",
+  [18] = "Array",
+  [19] = "Object",
+  [20] = "Key",
+  [21] = "Null",
+  [22] = "EnumMember",
+  [23] = "Struct",
+  [24] = "Event",
+  [25] = "Operator",
+  [26] = "TypeParameter",
+}
+
+-- Leading glyph that switches the query from a name search to a kind filter.
+-- Exposed on M so the shell can bind it as a normal-mode key that opens the prompt
+-- pre-seeded with the sigil (press `@` → straight into kind mode), keeping the key
+-- and the parsed syntax in lockstep from a single source of truth.
+local KIND_SIGIL = "@"
+M.kind_sigil = KIND_SIGIL
+
+-- Smartcase plain-substring search: returns a function name -> (s, e) 0-based byte
+-- span or nil. Case-insensitive unless `query` contains an uppercase letter.
+local function substring_search(query)
+  local ignorecase = query == query:lower()
+  local needle = ignorecase and query:lower() or query
+  return function(name)
+    local hay = ignorecase and name:lower() or name
+    local s = hay:find(needle, 1, true)
+    if s then
+      return s - 1, s - 1 + #needle
+    end
+    return nil
+  end
+end
+
+-- Build the live-filter predicate for `query`.
+--   "@<kind> <name>" → kind filter. The kind token (up to the first space) is a
+--     case-insensitive PREFIX over KIND_NAMES, unioned across every kind it prefixes
+--     (empty token → all kinds); the remaining text, if any, is ANDed as a name
+--     substring. A kind-only match carries no span (nothing to underline).
+--   "<name>"         → plain name substring (smartcase), the original behavior.
+function M.make_matcher(query)
+  if query:sub(1, #KIND_SIGIL) == KIND_SIGIL then
+    local rest = query:sub(#KIND_SIGIL + 1)
+    local kind_token, name_part = rest:match("^(%S*)%s*(.*)$")
+    kind_token = (kind_token or ""):lower()
+
+    -- Every SymbolKind whose name has `kind_token` as a prefix (empty → all).
+    local kinds = {}
+    for num, kname in pairs(KIND_NAMES) do
+      if kname:lower():sub(1, #kind_token) == kind_token then
+        kinds[num] = true
+      end
+    end
+
+    local name_search = name_part ~= "" and substring_search(name_part) or nil
+    return function(node)
+      if not kinds[node.kind] then
+        return false
+      end
+      if not name_search then
+        return { span = nil } -- kind-only: a real match, no substring to highlight
+      end
+      local s, e = name_search(node.name)
+      if not s then
+        return false
+      end
+      return { span = { s, e } }
+    end
+  end
+
+  local name_search = substring_search(query)
+  return function(node)
+    local s, e = name_search(node.name)
+    if not s then
+      return false
+    end
+    return { span = { s, e } }
+  end
 end
 
 -- ── render: node -> line text + highlight spans ──────────────────────────────

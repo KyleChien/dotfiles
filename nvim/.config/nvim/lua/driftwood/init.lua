@@ -56,7 +56,7 @@ M.config = {
         jump = "<CR>",
         expand_all = "zR",
         collapse_all = "zM",
-        close = { "q", "<Esc>", ";" },
+        close = { "q", ";" },
       },
 
       -- Optional per-provider geometry override, deep-merged over global layouts.
@@ -82,15 +82,22 @@ M.config = {
       follow = { enabled = true, hl = "Visual", recenter = true },
 
       -- Live symbol filter. A permanent bar on the float's top line advertises the
-      -- trigger key; pressing it opens an editable prompt: type to filter
-      -- (substring, smartcase) and the outline narrows live to matches + their
-      -- ancestor path, with the first match highlighted + previewed. accept (<CR>)
+      -- trigger key; pressing it opens an editable prompt: type to filter and the
+      -- outline narrows live to matches + their ancestor path, with the first match
+      -- highlighted + previewed. Two query forms (parsed by the provider's matcher):
+      --   "foo"          → name substring, smartcase.
+      --   "@class"       → kind filter: the token after @ is a case-insensitive
+      --                    prefix over SymbolKind names, unioned across every kind it
+      --                    prefixes (@c → Class/Constructor/Constant, @fu → Function).
+      --   "@function foo"→ both: Functions whose name also contains "foo".
+      -- accept (<CR>)
       -- jumps to that first match; abandon (<Esc>) hands the *real* cursor to the
       -- narrowed tree so j/k/l/h and <CR> browse it exactly like the full outline.
       -- A second <Esc> (normal mode) clears the filter and restores the full tree
       -- (folds intact — filtering never mutates them). `/` again refines the query.
       --   enabled → on/off switch for the whole feature.
-      --   key     → normal-mode key (inside the float) that opens the prompt.
+      --   key     → normal-mode key (inside the float) that opens the prompt. The
+      --             provider's kind sigil (@) also opens it, pre-seeded into kind mode.
       --   hint    → text shown in the bar when idle (advertises the feature).
       --   prompt  → glyph drawn (as inline virtual text) before the live query.
       --   keys    → prompt (insert-mode) keys: accept jumps to the first match,
@@ -98,7 +105,7 @@ M.config = {
       search = {
         enabled = true,
         key = "/",
-        hint = "/ to filter",
+        hint = "/ name  @kind",
         prompt = "/ ",
         placeholder = "(no matches)",
         keys = {

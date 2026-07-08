@@ -77,10 +77,12 @@ end
 
 -- The rows to display: filtered when a non-empty query is in effect, else the
 -- full fold-honoring tree. Filtering never mutates node.expanded, so clearing the
--- query restores the exact prior folds.
+-- query restores the exact prior folds. Matching is provider-owned: the provider
+-- turns the query into a per-node predicate (name substring, @kind filter, …); a
+-- provider without make_matcher simply can't filter.
 local function compute_rows()
-  if filtering() then
-    return tree.flatten_filtered(state.roots, state.filter.query)
+  if filtering() and state.provider.make_matcher then
+    return tree.flatten_filtered(state.roots, state.provider.make_matcher(state.filter.query))
   end
   return tree.flatten(state.roots)
 end
@@ -515,11 +517,16 @@ end
 
 -- Open the editable prompt (state 1 or 3 → 2). Keeps the existing query so `/`
 -- from the filtered state refines it; starts insert mode with the caret at the end
--- of the (possibly pre-filled) query.
-local function search_enter()
+-- of the (possibly pre-filled) query. `seed` (e.g. the provider's kind sigil) is
+-- prepended so a dedicated key can open the prompt straight in that mode — skipped
+-- when the query already starts with it, so refining doesn't stack sigils.
+local function search_enter(seed)
   local search = state.cfg.search
   if not (search and search.enabled) or typing() then
     return
+  end
+  if seed and seed ~= "" and state.filter.query:sub(1, #seed) ~= seed then
+    state.filter.query = seed .. state.filter.query
   end
   state.filter.typing = true
   vim.wo[state.win].cursorline = false -- caret parks on the bar; first match is its own hl
@@ -749,14 +756,18 @@ function M.open(provider, roots, cfg, origin)
         silent = true,
       })
     end
-    -- Normal-mode <Esc> peels one layer: clear an applied filter first (state
-    -- 3 → 1), otherwise close the float. (q and ; always close directly — they're
-    -- bound by set_keys and left untouched here.)
+    -- The provider's kind sigil (e.g. `@`) opens the same prompt pre-seeded with the
+    -- sigil, so a user lands straight in kind mode without typing `/` first.
+    if provider.kind_sigil then
+      vim.keymap.set("n", provider.kind_sigil, function()
+        search_enter(provider.kind_sigil)
+      end, { buffer = buf, nowait = true, silent = true })
+    end
+    -- Normal-mode <Esc> clears an applied filter (state 3 → 1); it does not close
+    -- the float (only q and ; do, bound by set_keys). With no filter it's a no-op.
     vim.keymap.set("n", "<Esc>", function()
       if filtering() then
         search_clear()
-      else
-        M.close(true)
       end
     end, { buffer = buf, nowait = true, silent = true })
   end

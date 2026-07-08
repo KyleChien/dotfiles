@@ -56,45 +56,35 @@ end
 -- Filtered flatten: return only rows on a path to a match, ignoring fold state
 -- (matches and their ancestors are force-shown, so the outline auto-reveals hits
 -- without touching node.expanded — clearing the filter restores the exact prior
--- folds for free). Substring match on node.name with smartcase: case-insensitive
--- unless the query contains an uppercase letter.
---   Each row adds: match_span = { s, e } (0-based byte span within the name, only
---   on rows that matched themselves) and is_context = true on ancestor-only rows.
+-- folds for free). Matching is provider-owned: `matcher` maps a node to `false`
+-- (no match) or `{ span }`, where `span` is a 0-based byte range within the name to
+-- highlight (or nil for a match with nothing to underline). The generic tree stays
+-- symbol-agnostic — it never inspects node.name or node.kind itself.
+--   Each row adds: match_span = { s, e } (the matcher's span, only on rows that
+--   matched themselves) and is_context = true on ancestor-only rows.
 -- Returns the row list (possibly empty when nothing matches).
-function M.flatten_filtered(roots, query)
-  if not query or query == "" then
+function M.flatten_filtered(roots, matcher)
+  if not matcher then
     return M.flatten(roots)
-  end
-
-  local ignorecase = query == query:lower()
-  local needle = ignorecase and query:lower() or query
-  -- byte span of `needle` in `name` (plain, no patterns), or nil.
-  local function match(name)
-    local hay = ignorecase and name:lower() or name
-    local s = hay:find(needle, 1, true)
-    if s then
-      return s - 1, s - 1 + #needle
-    end
-    return nil
   end
 
   -- Build the visible rows for `nodes`. A node is kept when it matches itself or
   -- has any kept descendant; kept branches are force-shown (expanded), matched
-  -- rows carry a match_span, ancestor-only rows are flagged is_context.
+  -- rows carry the matcher's span, ancestor-only rows are flagged is_context.
   local function build(nodes, depth)
     local acc = {}
     for _, node in ipairs(nodes) do
-      local ms, me = match(node.name)
+      local m = matcher(node)
       local has_children = node.children ~= nil and #node.children > 0
       local child_rows = has_children and build(node.children, depth + 1) or {}
-      if ms or #child_rows > 0 then
+      if m or #child_rows > 0 then
         acc[#acc + 1] = {
           node = node,
           depth = depth,
           has_children = has_children,
           expanded = #child_rows > 0, -- open only when we actually reveal children
-          match_span = ms and { ms, me } or nil,
-          is_context = ms == nil,
+          match_span = m and m.span or nil,
+          is_context = not m, -- ancestor-only rows (no self-match) render dimmed
         }
         for _, r in ipairs(child_rows) do
           acc[#acc + 1] = r
