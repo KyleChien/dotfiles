@@ -41,9 +41,9 @@ local ns_edit = vim.api.nvim_create_namespace("driftwood_edit")
 --      first match is highlighted+previewed.
 --   3. filtered (normal) — query ~= "", not typing: the narrowed tree is browsed
 --      with the *real* cursor (j/k), exactly like the unfiltered tree.
--- `/` (or `@`) moves 1→2 (and 3→2 to refine). Any leave key (<CR>/<Esc>/<C-c>) in 2
--- hands the cursor to the tree (2→3, or 2→1 if empty) — none jump. <Esc>/<C-c> in 3
--- clear the filter (3→1); <CR> in 3 jumps to the row under the cursor.
+-- `f` (or `@`) moves 1→2 (and 3→2 to refine). Any leave key (<CR>/<Esc>/<C-c>) in 2
+-- hands the cursor to the tree (2→3, or 2→1 if empty) — none jump. `F` in 3 clears
+-- the filter (3→1); <CR> in 3 jumps to the row under the cursor.
 local state = nil
 
 -- Sticky-in-session layout: provider name -> last layout the user switched to.
@@ -1365,30 +1365,33 @@ function M.populate(token, roots)
   end
 
   if cfg.search and cfg.search.enabled then
-    -- `/` opens the editable prompt (state 1/3 → 2).
-    if cfg.search.key then
-      vim.keymap.set("n", cfg.search.key, search_enter, {
-        buffer = buf,
-        nowait = true,
-        silent = true,
-      })
-    end
-    -- The provider's kind sigil (e.g. `@`) opens the same prompt pre-seeded with the
-    -- sigil, so a user lands straight in kind mode without typing `/` first.
-    if provider.kind_sigil then
-      vim.keymap.set("n", provider.kind_sigil, function()
-        search_enter(provider.kind_sigil)
-      end, { buffer = buf, nowait = true, silent = true })
-    end
-    -- Normal-mode <Esc>/<C-c> clear an applied filter (state 3 → 1); they do not
-    -- close the float (only q and ; do, bound by set_keys). With no filter, no-op.
-    local function clear_filter()
-      if filtering() then
-        search_clear()
+    local function nmap(keys, fn)
+      if type(keys) == "string" then
+        keys = { keys }
+      end
+      for _, lhs in ipairs(keys or {}) do
+        vim.keymap.set("n", lhs, fn, { buffer = buf, nowait = true, silent = true })
       end
     end
-    for _, lhs in ipairs({ "<Esc>", "<C-c>" }) do
-      vim.keymap.set("n", lhs, clear_filter, { buffer = buf, nowait = true, silent = true })
+    -- `search.key` (default `f`) opens the editable prompt (state 1/3 → 2).
+    if cfg.search.key then
+      nmap(cfg.search.key, search_enter)
+    end
+    -- The provider's kind sigil (e.g. `@`) opens the same prompt pre-seeded with the
+    -- sigil, so a user lands straight in kind mode without typing the trigger first.
+    if provider.kind_sigil then
+      nmap(provider.kind_sigil, function()
+        search_enter(provider.kind_sigil)
+      end)
+    end
+    -- `search.clear_key` (default `F`) clears an applied filter (state 3 → 1); it does
+    -- not close the float (only q and ; do, bound by set_keys). With no filter, no-op.
+    if cfg.search.clear_key then
+      nmap(cfg.search.clear_key, function()
+        if filtering() then
+          search_clear()
+        end
+      end)
     end
   end
 

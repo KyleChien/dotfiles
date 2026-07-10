@@ -118,8 +118,9 @@ M.config = {
       --                  browsing. Key or list of keys.
       search = {
         enabled = true,
-        key = "/",
-        hint = "/ to filter",
+        key = "f", -- opens the filter prompt (normal mode, inside the float)
+        clear_key = "F", -- clears an applied filter, back to the full tree
+        hint = "f to filter",
         -- The leading bar icon. Grey (hl.prompt) in normal mode, highlighted
         -- (hl.editing) while the prompt is open — the "you're in search mode" signal.
         prompt = " ",
@@ -282,9 +283,10 @@ M.config = {
 
       search = {
         enabled = true,
-        key = "/",
+        key = "f", -- opens the filter prompt
+        clear_key = "F", -- clears an applied filter
         -- Name substring + optional `@file`/`@dir` type filter, in any order.
-        hint = "/ to filter",
+        hint = "f to filter",
         prompt = " ", -- grey (hl.prompt) idle, highlighted (hl.editing) in search mode
         editing_hint = "name @kind", -- same example both providers, per spec
         placeholder = "(no matches)",
