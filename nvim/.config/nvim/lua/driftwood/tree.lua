@@ -113,6 +113,42 @@ function M.flatten_filtered(roots, matcher)
   return build(roots, 0)
 end
 
+-- Uniformly fold the tree to `level`: a branch at depth d (0-based) is expanded
+-- iff d < level. So level 0 folds everything down to the roots, level 1 opens the
+-- roots' direct children, and level >= M.max_level opens the whole tree. Mirrors
+-- M.prepare's depth logic (without re-linking parents, already done on open) and is
+-- what the shell's dynamic fold-level control drives.
+function M.set_expanded_depth(roots, level)
+  local function walk(nodes, depth)
+    for _, node in ipairs(nodes) do
+      if node.children and #node.children > 0 then
+        node.expanded = depth < level
+        walk(node.children, depth + 1)
+      end
+    end
+  end
+  walk(roots, 0)
+end
+
+-- The greatest fold level that still changes the tree: (max depth of any node that
+-- has children) + 1, or 0 for a flat tree with nothing to fold. A full unfold is
+-- level == M.max_level; it's the denominator of the fold-level indicator.
+function M.max_level(roots)
+  local maxd = -1
+  local function walk(nodes, depth)
+    for _, node in ipairs(nodes) do
+      if node.children and #node.children > 0 then
+        if depth > maxd then
+          maxd = depth
+        end
+        walk(node.children, depth + 1)
+      end
+    end
+  end
+  walk(roots, 0)
+  return maxd + 1
+end
+
 -- Expand or collapse every branch in the tree.
 function M.set_expanded_all(roots, value)
   local function walk(nodes)

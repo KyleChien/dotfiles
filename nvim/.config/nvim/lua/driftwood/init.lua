@@ -56,6 +56,10 @@ M.config = {
         jump = "<CR>",
         expand_all = "zR",
         collapse_all = "zM",
+        -- Dynamic fold level: step the whole tree one level shallower/deeper (vim
+        -- zm/zr). The current level is shown as a dot meter in the window title.
+        fold_less = "<",
+        fold_more = ">",
         close = { "q", ";" },
       },
 
@@ -70,6 +74,13 @@ M.config = {
       },
 
       chevron = { expanded = "▾", collapsed = "▸" },
+
+      -- Dynamic fold-level indicator: a dot meter appended to the window title, one
+      -- dot per foldable level, filled up to the current level (e.g. "●●○○" = level
+      -- 2 of 4). Stepped by the fold_less/fold_more keys above; also tracks zM/zR.
+      --   filled/empty → glyphs for open / closed levels.
+      --   hl           → highlight group for the meter chunk in the title.
+      fold = { filled = "●", empty = "○", hl = "Number" },
 
       -- Live follow (preview) mode. As the cursor moves over the outline, paint
       -- the hovered symbol's full range in the origin window and move its cursor
@@ -220,6 +231,7 @@ local function resolve_config(global, pcfg)
     follow = pcfg.follow,
     search = pcfg.search,
     pins = pcfg.pins,
+    fold = pcfg.fold,
     chevron = pcfg.chevron,
     hl = pcfg.hl,
     icons = pcfg.icons,

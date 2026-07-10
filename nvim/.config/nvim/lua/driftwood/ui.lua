@@ -45,6 +45,14 @@ local state = nil
 -- Cleared on nvim restart; never written to disk.
 local last_layout = {}
 
+-- Sticky-in-session fold level, scoped per file: "provider\0path" -> last level the
+-- user set (via </>, zM/zR). Restored on the next open of that same file in place of
+-- the configured initial_depth. Like last_layout: session-only, never persisted.
+local last_fold_level = {}
+local function fold_key()
+  return state.provider.name .. "\0" .. (state.origin_path or "")
+end
+
 -- ── rendering ──────────────────────────────────────────────────────────────
 -- Row content is provider-owned: state.provider.render(row, cfg) returns the
 -- line text plus a list of { start_col, end_col, hl_group } byte spans. The loop
@@ -154,6 +162,39 @@ local function bar_width()
   return vim.fn.strdisplaywidth(search.hint or "")
 end
 
+-- ── fold-level indicator (dot meter in the border title) ────────────────────
+-- The dynamic fold level (state.fold_level, 0..state.max_level) is visualized as a
+-- dot meter appended to the window title: one dot per foldable level, filled up to
+-- the current level (e.g. "●●○○" = level 2 of 4). Recomputed on every geometry
+-- apply so it tracks `<`/`>`, zM/zR live. Past `max_dots` levels it degrades to
+-- "L/max" text so the title can't run away on absurdly deep trees.
+local FOLD_MAX_DOTS = 8
+
+local function fold_meter()
+  local f = state and state.cfg.fold
+  if not (f and state.max_level and state.max_level > 0) then
+    return ""
+  end
+  local lvl = math.max(0, math.min(state.fold_level or 0, state.max_level))
+  if state.max_level > FOLD_MAX_DOTS then
+    return lvl .. "/" .. state.max_level
+  end
+  return string.rep(f.filled, lvl) .. string.rep(f.empty, state.max_level - lvl)
+end
+
+-- The border title for the current geometry apply: the base title, plus the fold
+-- meter (as a separately-highlighted chunk) when the tree can fold. Returns a plain
+-- string when there's no meter so the common case stays a bare title.
+local function win_title()
+  local base = (state and state.cfg.window.title) or ""
+  local meter = fold_meter()
+  if meter == "" then
+    return base
+  end
+  local hl = (state.cfg.fold and state.cfg.fold.hl) or "Number"
+  return { { base, "FloatTitle" }, { meter .. " ", hl } }
+end
+
 -- Re-fit the window to the given lines (plus the bar's virtual width, plus the
 -- pin badges' reserved width so a "fit"-width window can't clip the right-aligned
 -- badge — the badge isn't in the line text, so content_dims can't see it).
@@ -164,6 +205,7 @@ local function refit(lines)
     cw = cw + state.badge_w + 1
   end
   local geo = window.compute_geometry(state.cfg, cw, ch)
+  geo.title = win_title() -- append the live fold meter to the border title
   vim.api.nvim_win_set_config(state.win, window.win_config(geo, state.cfg))
 end
 
@@ -472,12 +514,20 @@ function actions.collapse()
   end
 end
 
+-- Set the fold level *and* remember it for this session, so the next open of this
+-- same file restores it (see M.populate). Session-only, keyed per file.
+local function remember_fold_level(level)
+  state.fold_level = level
+  last_fold_level[fold_key()] = level
+end
+
 function actions.expand_all()
   if filtering() then -- folds are inert under a filter; leave them intact
     return
   end
   local row = current_row()
   tree.set_expanded_all(state.roots, true)
+  remember_fold_level(state.max_level) -- fully open: sync the meter to max
   render()
   if row then
     move_cursor_to_node(row.node)
@@ -490,10 +540,44 @@ function actions.collapse_all()
   end
   local row = current_row()
   tree.set_expanded_all(state.roots, false)
+  remember_fold_level(0) -- fully folded: sync the meter to 0
   render()
   if row then
     move_cursor_to_node(row.node)
   end
+end
+
+-- ── dynamic fold level ───────────────────────────────────────────────────────
+-- Uniformly fold/unfold the whole tree by one level, like vim's zm/zr. Setting a
+-- level overrides any manual l/h folds (it's a uniform depth), and the title meter
+-- redraws to match. Clamped to [0, max_level]; a no-op at the ends and under a
+-- filter (where folds are inert and must stay intact for the clear-to-restore).
+local function set_fold_level(level)
+  level = math.max(0, math.min(level, state.max_level or 0))
+  if level == state.fold_level then
+    return
+  end
+  remember_fold_level(level)
+  local row = current_row()
+  tree.set_expanded_depth(state.roots, level)
+  render()
+  if row then
+    move_cursor_to_node(row.node)
+  end
+end
+
+function actions.fold_more() -- unfold one level (open deeper) — the `>` key
+  if filtering() then
+    return
+  end
+  set_fold_level((state.fold_level or 0) + 1)
+end
+
+function actions.fold_less() -- fold one level (close deeper) — the `<` key
+  if filtering() then
+    return
+  end
+  set_fold_level((state.fold_level or 0) - 1)
 end
 
 function actions.close()
@@ -977,6 +1061,22 @@ function M.populate(token, roots)
 
   tree.prepare(roots, cfg.initial_depth)
   state.roots = roots
+
+  -- Resolve the fold level: the session-sticky level (last set via </>, zM/zR) for
+  -- *this file* if any, else the configured initial depth (a number is that level;
+  -- "all"/true/nil means fully open == max_level). Then apply it to the tree so the
+  -- folds match the restored meter — overriding tree.prepare's initial pass.
+  state.max_level = tree.max_level(roots)
+  local sticky = last_fold_level[fold_key()]
+  local lvl
+  if sticky ~= nil then
+    lvl = sticky
+  else
+    local id = cfg.initial_depth
+    lvl = type(id) == "number" and id or state.max_level
+  end
+  state.fold_level = math.max(0, math.min(lvl, state.max_level))
+  tree.set_expanded_depth(roots, state.fold_level)
 
   refresh_pins() -- load + prune the file's pins before the first render
   render()

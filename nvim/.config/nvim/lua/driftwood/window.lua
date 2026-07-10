@@ -120,6 +120,11 @@ function M.win_config(geo, cfg)
   if geo.anchor then
     c.anchor = geo.anchor
   end
+  -- A caller can override the border title per-apply (e.g. the shell appends its
+  -- live fold-level meter). Accepts a string or nvim's [text, hl] chunk list.
+  if geo.title ~= nil then
+    c.title = geo.title
+  end
   return c
 end
 
