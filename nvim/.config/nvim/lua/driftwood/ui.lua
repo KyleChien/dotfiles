@@ -23,9 +23,13 @@ local ns_sel = vim.api.nvim_create_namespace("driftwood_sel")
 -- 1..N. So tree row i (1-based, into state.rows) lives on 0-based buffer line i,
 -- i.e. cursor line i + 1. All the row<->line math below honors that offset.
 --
--- state = { win, buf, cfg, provider, roots, rows, origin_win, origin_buf,
+-- state = { win, buf, cfg, provider, roots, rows, origin, origin_win, origin_buf,
 --           origin_view, follow_node,
---           filter = { query, sel, typing }, search_aucmds, search_maps, rendering }
+--           filter = { query, sel, typing }, search_aucmds, search_maps, rendering,
+--           loading, token, spin_frame, spin_timer }
+-- While `loading` (fetch in flight) roots/rows are empty and only the spinner +
+-- close keys are live; M.populate flips it off and wires the rest. `token` (a
+-- monotonic id from open_seq) guards the async fetch callback.
 --
 -- The live filter has three states, keyed off `filter`:
 --   1. unfiltered      — query == "", not typing: the full fold-honoring tree.
@@ -766,6 +770,60 @@ local function set_layout_keys(buf, cfg)
   end
 end
 
+-- ── loading state (spinner while the provider fetches) ───────────────────────
+-- The float opens immediately, before the provider's (async) fetch resolves, so
+-- it never blocks on slow LSP servers. Until roots arrive it shows an animated
+-- braille spinner; `token` guards the async callback so a fetch that resolves
+-- after its window was closed (or replaced by a newer open) is ignored.
+
+local SPINNER = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+local SPINNER_MS = 80
+-- Monotonic open counter; each open_loading claims the next value as its token.
+local open_seq = 0
+
+local function stop_spinner()
+  if state and state.spin_timer then
+    pcall(vim.fn.timer_stop, state.spin_timer)
+    state.spin_timer = nil
+  end
+end
+
+-- Write a single status line (the spinner or a message) as the float's only
+-- content, highlight it, and re-fit the window. Bypasses the tree/bar machinery
+-- entirely — during loading there are no rows, no filter, no pins.
+local function render_status(line, spans)
+  state.rendering = true
+  vim.bo[state.buf].modifiable = true
+  vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, { line })
+  vim.bo[state.buf].modifiable = false
+  state.rendering = false
+  vim.api.nvim_buf_clear_namespace(state.buf, ns, 0, -1)
+  for _, s in ipairs(spans or {}) do
+    add_hl(0, s[1], s[2], s[3]) -- status text lives on buffer line 0
+  end
+  local cw, ch = content_dims({ line })
+  local geo = window.compute_geometry(state.cfg, cw, ch)
+  vim.api.nvim_win_set_config(state.win, window.win_config(geo, state.cfg))
+end
+
+-- The current spinner frame as line text + highlight spans (glyph accented, label
+-- dimmed). Braille glyphs are 3 bytes, so the spans are byte-accurate.
+local function loading_line()
+  local sp = SPINNER[state.spin_frame]
+  local text = " " .. sp .. " Loading…"
+  return text, { { 1, 1 + #sp, "Special" }, { 1 + #sp, #text, "Comment" } }
+end
+
+-- Timer tick: advance one frame and repaint. Stands down once populate/close has
+-- cleared the loading flag (the timer is stopped there too; this is belt-and-braces).
+local function spin_tick()
+  if not (state and state.loading) then
+    return
+  end
+  state.spin_frame = state.spin_frame % #SPINNER + 1
+  render_status(loading_line())
+end
+
 -- ── public API ────────────────────────────────────────────────────────────────
 
 function M.is_open()
@@ -781,6 +839,7 @@ function M.close(restore)
   if not state then
     return
   end
+  stop_spinner()
   if typing() then
     pcall(vim.cmd, "stopinsert")
     search_teardown()
@@ -799,10 +858,13 @@ function M.close(restore)
   end
 end
 
--- Open the float for `provider`'s `roots`, focus it, and place the cursor on the
--- node that encloses `origin.pos` (a 1-based {line, col} from nvim_win_get_cursor).
-function M.open(provider, roots, cfg, origin)
-  tree.prepare(roots, cfg.initial_depth)
+-- Open the float *now*, in a loading state, before `provider.fetch` resolves.
+-- Creates the buffer/window, snapshots the origin view, starts the spinner, and
+-- binds only the close keys (the tree isn't there yet). Returns a token the caller
+-- passes back to M.populate so a stale fetch can't fill the wrong window.
+function M.open_loading(provider, cfg, origin)
+  open_seq = open_seq + 1
+  local token = open_seq
 
   -- Restore the layout the user last switched this provider to (this session).
   local sticky = last_layout[provider.name]
@@ -818,12 +880,9 @@ function M.open(provider, roots, cfg, origin)
   -- (and most engines) treat this buffer var as an off switch.
   vim.b[buf].completion = false
 
-  local rows = tree.flatten(roots)
-  local lines = {}
-  for i, row in ipairs(rows) do
-    lines[i] = provider.render(row, cfg, cfg.window.layout)
-  end
-  local cw, ch = content_dims(lines)
+  -- Size the initial window to the loading line (re-fit again when rows arrive).
+  local frame0 = " " .. SPINNER[1] .. " Loading…"
+  local cw, ch = content_dims({ frame0 })
   local geo = window.compute_geometry(cfg, cw, ch)
 
   local win = vim.api.nvim_open_win(buf, true, window.win_config(geo, cfg))
@@ -848,8 +907,9 @@ function M.open(provider, roots, cfg, origin)
     buf = buf,
     cfg = cfg,
     provider = provider,
-    roots = roots,
-    rows = rows,
+    roots = nil, -- filled by M.populate when fetch resolves
+    rows = {},
+    origin = origin, -- kept so populate can place the cursor at the origin symbol
     origin_win = origin.win,
     origin_buf = origin_buf,
     origin_view = origin_view,
@@ -860,7 +920,63 @@ function M.open(provider, roots, cfg, origin)
     pin_num = nil,
     pin_bynum = nil,
     badge_w = 0,
+    loading = true,
+    token = token,
+    spin_frame = 1,
   }
+
+  render_status(loading_line())
+
+  -- Close keys work immediately, so the float can be dismissed mid-load. The full
+  -- keymap (navigation, pins, search, layout) is wired in M.populate once rows exist.
+  local close_keys = cfg.keys.close
+  if type(close_keys) == "string" then
+    close_keys = { close_keys }
+  end
+  for _, key in ipairs(close_keys or {}) do
+    vim.keymap.set("n", key, function()
+      M.close(true)
+    end, { buffer = buf, nowait = true, silent = true })
+  end
+
+  -- Close when the float loses focus, even mid-load. Snap the origin view back
+  -- first (without refocusing — the user chose a new window).
+  vim.api.nvim_create_autocmd("WinLeave", {
+    buffer = buf,
+    once = true,
+    callback = function()
+      restore_origin_view()
+      M.close(false)
+    end,
+  })
+
+  state.spin_timer = vim.fn.timer_start(SPINNER_MS, spin_tick, { ["repeat"] = -1 })
+  return token
+end
+
+-- Fill the loading float with the fetched `roots` (or a "No symbols" message when
+-- `roots` is nil), then wire up the full keymap and place the cursor. No-ops unless
+-- `token` still matches the open float — guarding against a fetch that resolved
+-- after its window was closed or replaced by a newer open.
+function M.populate(token, roots)
+  if not (state and state.token == token and state.loading) then
+    return
+  end
+  stop_spinner()
+  state.loading = false
+
+  -- No symbols (or no capable LSP client): keep the float open with a message; the
+  -- close keys are already bound, and there's no tree to navigate.
+  if not roots then
+    render_status(" No symbols", { { 0, #" No symbols", "Comment" } })
+    return
+  end
+
+  local provider, cfg, origin, buf, win = state.provider, state.cfg, state.origin, state.buf, state.win
+  local follow_enabled = cfg.follow and cfg.follow.enabled
+
+  tree.prepare(roots, cfg.initial_depth)
+  state.roots = roots
 
   refresh_pins() -- load + prune the file's pins before the first render
   render()
@@ -941,17 +1057,6 @@ function M.open(provider, roots, cfg, origin)
       follow_preview(row.node)
     end
   end
-
-  -- Close when the float loses focus (e.g. the user clicks another window). Snap
-  -- the origin view back first (without refocusing — the user chose a new window).
-  vim.api.nvim_create_autocmd("WinLeave", {
-    buffer = buf,
-    once = true,
-    callback = function()
-      restore_origin_view()
-      M.close(false)
-    end,
-  })
 end
 
 return M

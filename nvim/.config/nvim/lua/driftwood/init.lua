@@ -268,12 +268,13 @@ function M.toggle(name)
 
   local provider = require("driftwood.providers." .. name)
   local cfg = resolve_config(M.config, pcfg)
+  -- Open the float immediately (spinner), then fetch: the window never blocks on a
+  -- slow LSP. `token` ties this open to its callback so a stale fetch can't fill a
+  -- window that was closed or replaced in the meantime. An empty result renders a
+  -- "No symbols" message in place, keeping the float open.
+  local token = ui.open_loading(provider, cfg, origin)
   provider.fetch(bufnr, function(roots)
-    if not roots then
-      vim.notify("driftwood: no document symbols", vim.log.levels.INFO)
-      return
-    end
-    ui.open(provider, roots, cfg, origin)
+    ui.populate(token, roots)
   end)
 end
 
