@@ -146,16 +146,24 @@ local function substring_search(query)
 end
 
 -- Build the live-filter predicate for `query`.
---   "@<kind> <name>" → kind filter. The kind token (up to the first space) is a
---     case-insensitive PREFIX over KIND_NAMES, unioned across every kind it prefixes
---     (empty token → all kinds); the remaining text, if any, is ANDed as a name
---     substring. A kind-only match carries no span (nothing to underline).
---   "<name>"         → plain name substring (smartcase), the original behavior.
+--   A query is split into an optional `@kind` token and a name substring, in any
+--   order — `@function proc`, `proc @function`, and `pr@func oc`ing all parse the
+--   same. The `@…` token (matched anywhere) is a case-insensitive PREFIX over
+--   KIND_NAMES, unioned across every kind it prefixes (bare `@` → all kinds); the
+--   leftover text (everything that isn't the `@` token) is ANDed as a name
+--   substring (smartcase). A kind-only match carries no span (nothing to underline).
+--   With no `@`, the whole query is a plain name substring — the original behavior.
 function M.make_matcher(query)
-  if query:sub(1, #KIND_SIGIL) == KIND_SIGIL then
-    local rest = query:sub(#KIND_SIGIL + 1)
-    local kind_token, name_part = rest:match("^(%S*)%s*(.*)$")
+  -- Extract the first `@kind` token from anywhere in the query; the remainder
+  -- (with the token spliced out) is the name part. Order-independent by design.
+  if query:find(KIND_SIGIL, 1, true) then
+    local kind_token
+    local name_part = query:gsub(KIND_SIGIL .. "(%S*)", function(tok)
+      kind_token = kind_token or tok
+      return ""
+    end)
     kind_token = (kind_token or ""):lower()
+    name_part = vim.trim(name_part)
 
     -- Every SymbolKind whose name has `kind_token` as a prefix (empty → all).
     local kinds = {}

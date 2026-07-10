@@ -26,7 +26,7 @@ actually exists. Everything below is scoped by that discipline.
 | 6 | Public API | Nested `providers = { symbols = {…} }`; each provider owns its toggle `key` |
 | 7a | Layout persistence | Sticky **in-session** (module-level `last_layout[provider]`); resets on nvim restart |
 | 7b | Content freshness | Snapshot on open; no auto-refresh (reopen to refresh) |
-| 8 | Live filter | Permanent top-line search bar; `/` opens an editable prompt that narrows the outline live to matches + ancestors. Query is a name substring (smartcase) or `@kind` (prefix over SymbolKind names, `@function foo` ANDs a name). `<CR>` jumps to the first match, `<Esc>` hands the **real cursor** to the narrowed tree (`j/k/l/h` browse it as normal); a second `<Esc>` clears the filter; non-destructive to folds |
+| 8 | Live filter | Permanent top-line search bar; `/` (or `@`) opens an editable prompt that narrows the outline live to matches + ancestors. Query mixes a name substring (smartcase) and an `@kind` token **in any order** (`proc @function` == `@function proc`); the `@` token is a prefix over the provider's kind names (SymbolKind for symbols, `file`/`dir` for files), ANDed with the name. The bar's leading `>` icon lights up (grey → highlighted) as the edit-mode signal. Any leave key (`<CR>`/`<Esc>`/`<C-c>`) hands the **real cursor** to the narrowed tree (`j/k/l/h` browse, `<CR>` jumps); in the narrowed tree `<Esc>`/`<C-c>` clear the filter; non-destructive to folds |
 | 9 | Pinned symbols | `p` toggles a pin on the row; pinned symbols carry a right-aligned number badge, are numbered by document order, force-shown under collapsed parents, and jumped to with `1`–`9`. Pins persist **on disk** (single JSON), keyed by name+kind+ancestor-path, pruned when they no longer match. Shell owns the store/window/keys; the provider supplies `pin_key`/`pin_match` |
 
 > Decision 9 deliberately reopens two earlier ones: **7b** (content is otherwise
@@ -88,14 +88,14 @@ require("driftwood").setup({
       search = {                           -- live filter (permanent top-line bar)
         enabled = true,
         key = "/",                         -- opens the editable prompt
-        hint = "/ to filter",              -- idle bar text (virtual)
-        prompt = "/ ",                     -- glyph before the live query (virtual)
+        hint = "/ to filter",              -- idle hint (grey), after the icon
+        prompt = "> ",                     -- leading icon: grey idle, highlighted while typing
+        editing_hint = "name @kind",       -- grey example shown while typing an empty query
         placeholder = "(no matches)",
         keys = {                           -- prompt (insert-mode) keys
-          accept = "<CR>",                 -- jump to the first match
-          abandon = "<Esc>",               -- hand off to normal-mode browsing
+          leave = { "<CR>", "<Esc>", "<C-c>" }, -- all hand off to normal-mode browsing (none jump)
         },
-        hl = { match = "Search", context = "Comment", selection = "Visual" },
+        hl = { prompt = "Comment", hint = "Comment", editing = "Special", match = "Search", context = "Comment", selection = "Visual" },
       },
       pins = {                             -- pinned symbols (on-disk, name+kind+path keyed)
         enabled = true,
@@ -189,29 +189,32 @@ The shell (`window` + `render` + `tree`) never mentions symbols, LSP, or ranges.
   2. **Typing** (`typing == true`): the `key` (`/`) opens the prompt (the provider's
      kind sigil `@` opens the same prompt pre-seeded with `@`, so kind mode is one
      keystroke away) — line 0
-     becomes editable (`modifiable` on, `startinsert`), the `prompt` glyph drawn as
-     inline virtual text so the buffer line holds *only* the query. A `TextChangedI`
-     autocmd re-filters on each edit via `tree.flatten_filtered`, driven by the
-     provider's `make_matcher(query)`. Two forms: a bare **name substring**
-     (smartcase), or `@kind` — the token after `@` is a case-insensitive **prefix**
-     over `SymbolKind` names, unioned across every kind it prefixes (`@c` →
-     Class/Constructor/Constant), and an optional trailing name substring is ANDed
-     (`@function foo`). Either keeps a matched node plus its **ancestor path** (force-shown;
+     becomes editable (`modifiable` on, `startinsert`), the leading `prompt` icon
+     (`> `) switches to its highlighted `hl.editing` colour to signal the edit mode,
+     and an `editing_hint` example (`name @kind`) trails it until the user starts
+     typing, then drops. A
+     `TextChangedI` autocmd re-filters on each edit via `tree.flatten_filtered`,
+     driven by the provider's `make_matcher(query)`. The query mixes, **in any
+     order**, a **name substring** (smartcase) and an `@kind` token: the text after
+     `@` is a case-insensitive **prefix** over the provider's kind names (SymbolKind
+     for symbols — `@c` → Class/Constructor/Constant; `file`/`dir` for files),
+     unioned across every kind it prefixes, ANDed with the name (`proc @function` ==
+     `@function proc`). A match keeps the node plus its **ancestor path** (force-shown;
      ancestor-only rows flagged `is_context`, rendered dimmed; matched substring in
      `hl.match`). The **first match** is highlighted (a `line_hl` extmark, the caret
-     parks on the prompt) and follow-previewed. `accept` (`<CR>`) jumps to that first
-     match and closes; `abandon` (`<Esc>`) hands off to state 3.
+     parks on the prompt) and follow-previewed. Any **leave key** (`<CR>`/`<Esc>`/`<C-c>`,
+     config `search.keys.leave`) hands off to state 3 — none jump or close.
   3. **Filtered-normal** (`query ~= ""`, not typing): the narrowed tree is browsed
      with the **real cursor** — `j/k/l/h` and `<CR>` (jump) behave exactly as in the
      unfiltered tree, `CursorMoved` drives follow-mode. The bar shows the applied
-     query as static line-0 text. Fold ops (`l/h/zR/zM`) stand down here so they
-     can't mutate `node.expanded` (`h` still hops to parent as navigation). `/`
-     re-opens the prompt **pre-filled** to refine.
+     query as static line-0 text behind the `prompt` glyph. Fold ops (`l/h/zR/zM`)
+     stand down here so they can't mutate `node.expanded` (`h` still hops to parent
+     as navigation). `/` re-opens the prompt **pre-filled** to refine.
 
   Filtering **never mutates `node.expanded`**, so clearing restores the exact prior
-  folds for free. The normal-mode `<Esc>` clears an applied filter (state 3 → full
-  tree, landing on the browsed symbol); with no filter it's a no-op — it does **not**
-  close the float. Only `q`/`;` close. No matches → a
+  folds for free. The normal-mode `<Esc>`/`<C-c>` clear an applied filter (state 3 →
+  full tree, landing on the browsed symbol); with no filter it's a no-op — it does
+  **not** close the float. Only `q`/`;` close. No matches → a
   dimmed `placeholder` line, nothing to jump to. Disabled → no bar, no key, no
   `<Esc>` override, zero change.
 

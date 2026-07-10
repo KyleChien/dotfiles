@@ -95,40 +95,50 @@ M.config = {
       -- Live symbol filter. A permanent bar on the float's top line advertises the
       -- trigger key; pressing it opens an editable prompt: type to filter and the
       -- outline narrows live to matches + their ancestor path, with the first match
-      -- highlighted + previewed. Two query forms (parsed by the provider's matcher):
-      --   "foo"          → name substring, smartcase.
-      --   "@class"       → kind filter: the token after @ is a case-insensitive
-      --                    prefix over SymbolKind names, unioned across every kind it
-      --                    prefixes (@c → Class/Constructor/Constant, @fu → Function).
-      --   "@function foo"→ both: Functions whose name also contains "foo".
-      -- accept (<CR>)
-      -- jumps to that first match; abandon (<Esc>) hands the *real* cursor to the
-      -- narrowed tree so j/k/l/h and <CR> browse it exactly like the full outline.
-      -- A second <Esc> (normal mode) clears the filter and restores the full tree
-      -- (folds intact — filtering never mutates them). `/` again refines the query.
-      --   enabled → on/off switch for the whole feature.
-      --   key     → normal-mode key (inside the float) that opens the prompt. The
-      --             provider's kind sigil (@) also opens it, pre-seeded into kind mode.
-      --   hint    → text shown in the bar when idle (advertises the feature).
-      --   prompt  → glyph drawn (as inline virtual text) before the live query.
-      --   keys    → prompt (insert-mode) keys: accept jumps to the first match,
-      --             abandon hands off to normal-mode browsing. Key or list of keys.
+      -- highlighted + previewed. A query mixes a name substring and an `@kind` token
+      -- in ANY order (parsed by the provider's matcher):
+      --   "foo"           → name substring, smartcase.
+      --   "@class"        → kind filter: the token after @ is a case-insensitive
+      --                     prefix over SymbolKind names, unioned across every kind it
+      --                     prefixes (@c → Class/Constructor/Constant, @fu → Function).
+      --   "@function foo" / "foo @function" → both, order-free: Functions named "foo".
+      -- Any leave key (<CR>/<Esc>/<C-c>) hands the *real* cursor to the narrowed tree
+      -- so j/k/l/h and <CR> browse/jump exactly like the full outline; none of them
+      -- jump straight from the prompt. In the narrowed tree <Esc>/<C-c> clear the
+      -- filter and restore the full tree (folds intact — filtering never mutates
+      -- them). `/` again refines the query.
+      --   enabled      → on/off switch for the whole feature.
+      --   key          → normal-mode key (inside the float) that opens the prompt. The
+      --                  provider's kind sigil (@) also opens it, pre-seeded into kind mode.
+      --   hint         → grey text shown in the bar when idle (advertises the feature).
+      --   prompt       → the leading bar icon (inline virtual text); recolours to
+      --                  hl.editing while the prompt is open.
+      --   editing_hint → grey example shown after the icon while the query is empty.
+      --   keys.leave   → prompt (insert-mode) keys that return to normal-mode
+      --                  browsing. Key or list of keys.
       search = {
         enabled = true,
         key = "/",
-        hint = "/ name  @kind",
-        prompt = "/ ",
+        hint = "/ to filter",
+        -- The leading bar icon. Grey (hl.prompt) in normal mode, highlighted
+        -- (hl.editing) while the prompt is open — the "you're in search mode" signal.
+        prompt = " ",
+        -- Example shown after the icon while the prompt is open and empty; drops the
+        -- moment the user starts typing.
+        editing_hint = "name @kind",
         placeholder = "(no matches)",
         keys = {
-          accept = "<CR>",
-          abandon = "<Esc>",
+          -- Every key that leaves the prompt back to normal-mode browsing.
+          leave = { "<CR>", "<Esc>", "<C-c>" },
         },
         -- Filter highlights. match = matched substring, context = dimmed ancestor
         -- rows, selection = the first-match row highlighted while typing,
-        -- hint/prompt/query = the bar, placeholder = the "(no matches)" line.
+        -- hint = the grey bar hint/example, prompt = the grey (idle) icon,
+        -- editing = the highlighted (search-mode) icon, placeholder = "(no matches)".
         hl = {
           prompt = "Comment",
           hint = "Comment",
+          editing = "Special",
           query = "Normal",
           match = "Search",
           context = "Comment",
@@ -273,14 +283,16 @@ M.config = {
       search = {
         enabled = true,
         key = "/",
-        -- `/name` filters by name; `@dir` scopes the tree to matching folders.
-        hint = "/ name  @scope",
-        prompt = "/ ",
+        -- Name substring + optional `@file`/`@dir` type filter, in any order.
+        hint = "/ to filter",
+        prompt = " ", -- grey (hl.prompt) idle, highlighted (hl.editing) in search mode
+        editing_hint = "name @kind", -- same example both providers, per spec
         placeholder = "(no matches)",
-        keys = { accept = "<CR>", abandon = "<Esc>" },
+        keys = { leave = { "<CR>", "<Esc>", "<C-c>" } },
         hl = {
           prompt = "Comment",
           hint = "Comment",
+          editing = "Special",
           query = "Normal",
           match = "Search",
           context = "Comment",

@@ -4,7 +4,7 @@
 -- the tree → parse the edited buffer → file ops). The generic shell (window /
 -- render loop / tree / pins) knows none of this.
 --
--- The whole tree is scanned up front (so name search, @scope, and fold-level work
+-- The whole tree is scanned up front (so name search, @kind, and fold-level work
 -- over every node), but *asynchronously*: fetch walks the tree on a coroutine that
 -- yields to the event loop periodically, so the float opens immediately and shows
 -- the shell's loading spinner — just like the LSP symbols provider — instead of
@@ -13,7 +13,7 @@
 -- Provider contract (see docs/driftwood-design.md + providers/symbols.lua):
 --   fetch(bufnr, cb, cfg)        → cb(roots): the full directory tree (async).
 --   render(row, cfg, layout)     → text, spans.
---   make_matcher(query)          → per-node predicate; `@dir` sets scope = true.
+--   make_matcher(query)          → per-node predicate; `@file`/`@dir` type filter.
 --   pin_key/pin_match            → a file's absolute path is its stable identity.
 --   pin_scope(cfg)               → pins are keyed per tree root, not per origin file.
 --   actions.jump(ctx)            → open the file in the origin window.
@@ -129,12 +129,18 @@ function M.toggle_hidden()
 end
 
 -- ── filter matcher ────────────────────────────────────────────────────────────
--- `/name` = smartcase substring over the node name (loaded nodes only — lazy
--- loading means unexpanded dirs aren't searched until opened). `@dir` scopes the
--- tree to directories matching the token, showing each matched dir + its subtree.
+-- A query is a smartcase name substring plus an optional `@kind` type filter, in
+-- any order: `main @file`, `@file main`, and `ma@fil in` parse the same. The two
+-- file kinds are `file` and `dir`; the `@…` token is a case-insensitive PREFIX
+-- over them (`@f` → file, `@d` → dir, bare `@` → both), and the leftover text is
+-- ANDed as a name substring. Only loaded nodes are searched — lazy loading means
+-- unexpanded dirs aren't descended until opened.
 
 local KIND_SIGIL = "@"
 M.kind_sigil = KIND_SIGIL
+
+-- The file kinds a `@` token can prefix. Order irrelevant; both are checked.
+local KIND_NAMES = { "file", "dir" }
 
 local function substring_search(query)
   local ignorecase = query == query:lower()
@@ -150,21 +156,37 @@ local function substring_search(query)
 end
 
 function M.make_matcher(query)
-  if query:sub(1, #KIND_SIGIL) == KIND_SIGIL then
-    local token = query:sub(#KIND_SIGIL + 1)
-    local search = token ~= "" and substring_search(token) or nil
+  -- Pull the first `@kind` token from anywhere in the query; the remainder (token
+  -- spliced out) is the name part. Order-independent, mirroring the symbols provider.
+  if query:find(KIND_SIGIL, 1, true) then
+    local kind_token
+    local name_part = query:gsub(KIND_SIGIL .. "(%S*)", function(tok)
+      kind_token = kind_token or tok
+      return ""
+    end)
+    kind_token = (kind_token or ""):lower()
+    name_part = vim.trim(name_part)
+
+    -- Which of the two kinds the token prefixes (empty token → both).
+    local want = {}
+    for _, kname in ipairs(KIND_NAMES) do
+      want[kname] = kname:sub(1, #kind_token) == kind_token
+    end
+
+    local search = name_part ~= "" and substring_search(name_part) or nil
     return function(node)
-      if not node.is_dir then
-        return false -- scope matches folders; files ride along as descendants
+      local kind = node.is_dir and "dir" or "file"
+      if not want[kind] then
+        return false
       end
       if not search then
-        return { scope = true, span = nil } -- `@` alone scopes to every folder
+        return { span = nil } -- kind-only: a real match, no substring to highlight
       end
       local s, e = search(node.name)
       if not s then
         return false
       end
-      return { scope = true, span = { s, e } }
+      return { span = { s, e } }
     end
   end
 

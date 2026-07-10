@@ -36,12 +36,14 @@ local ns_edit = vim.api.nvim_create_namespace("driftwood_edit")
 --
 -- The live filter has three states, keyed off `filter`:
 --   1. unfiltered      — query == "", not typing: the full fold-honoring tree.
---   2. typing (insert) — typing == true: line 0 is an editable prompt, the tree
---      narrows live on each keystroke, the first match is highlighted+previewed.
+--   2. typing (insert) — typing == true: line 0 is an editable prompt (the bar icon
+--      lights up to mark the mode), the tree narrows live on each keystroke, the
+--      first match is highlighted+previewed.
 --   3. filtered (normal) — query ~= "", not typing: the narrowed tree is browsed
 --      with the *real* cursor (j/k), exactly like the unfiltered tree.
--- `/` moves 1→2 (and 3→2 to refine); <CR> in 2 jumps to the first match; <Esc>
--- in 2 hands the cursor to the tree (2→3); <Esc> in 3 clears the filter (3→1).
+-- `/` (or `@`) moves 1→2 (and 3→2 to refine). Any leave key (<CR>/<Esc>/<C-c>) in 2
+-- hands the cursor to the tree (2→3, or 2→1 if empty) — none jump. <Esc>/<C-c> in 3
+-- clear the filter (3→1); <CR> in 3 jumps to the row under the cursor.
 local state = nil
 
 -- Sticky-in-session layout: provider name -> last layout the user switched to.
@@ -115,29 +117,61 @@ local function compute_rows()
   return tree.flatten(state.roots, state.pinned)
 end
 
--- Paint the bar's inline virtual text on line 0: the prompt glyph while filtering,
--- otherwise the idle hint that advertises the trigger key. Lives in its own
--- namespace so tree-only redraws (on each keystroke) leave it untouched.
-local function paint_bar()
-  vim.api.nvim_buf_clear_namespace(state.buf, ns_bar, 0, -1)
+-- The bar's two virtual-text pieces for line 0, keyed off the filter state:
+--   `icon`  — the leading `prompt` glyph, always present. Grey (hl.prompt) in the
+--             idle/applied states, highlighted (hl.editing) while typing — the
+--             "you're in search mode" signal.
+--   `trail` — the hint that follows: the idle hint ("/ to filter") when idle, the
+--             `editing_hint` example ("name @kind") while typing an empty query, or
+--             nil when a real query occupies the line.
+-- Returns `icon` {text,hl}, `trail` {text,hl}|nil, and `qwidth` — the display width
+-- of any real line-0 text (the query) sitting between them. Nil when disabled.
+local function bar_parts()
   local search = state.cfg.search
   if not (search and search.enabled) then
-    return
+    return nil
   end
   local shl = search.hl or {}
-  local text, group
-  -- Prompt glyph whenever a query is being typed (2) or is applied (3); the idle
-  -- hint only in the unfiltered state (1).
-  if typing() or filtering() then
-    text, group = search.prompt or "", shl.prompt or "Comment"
-  else
-    text, group = search.hint or "", shl.hint or "Comment"
+  local icon = search.prompt or ""
+  if typing() then
+    local icon_c = { icon, shl.editing or shl.prompt or "Comment" }
+    if state.filter.query == "" then
+      local h = search.editing_hint or ""
+      return icon_c, h ~= "" and { h, shl.hint or "Comment" } or nil, 0
+    end
+    return icon_c, nil, vim.fn.strdisplaywidth(state.filter.query)
   end
-  if text ~= "" then
+  local icon_c = { icon, shl.prompt or "Comment" }
+  if filtering() then
+    return icon_c, nil, vim.fn.strdisplaywidth(state.filter.query)
+  end
+  local h = search.hint or ""
+  return icon_c, h ~= "" and { h, shl.hint or "Comment" } or nil, 0
+end
+
+-- Paint the bar's virtual text on line 0. Its own namespace, so tree-only redraws
+-- (each keystroke) leave it untouched. The icon is inline with left gravity (it
+-- stays at the far left, ahead of the caret); the trailing hint is inline with
+-- *right* gravity so the caret (buffer col 0) renders *before* it — the cursor sits
+-- at the start of the input, not shoved out past the placeholder.
+local function paint_bar()
+  vim.api.nvim_buf_clear_namespace(state.buf, ns_bar, 0, -1)
+  local icon, trail = bar_parts()
+  if not icon then
+    return
+  end
+  if icon[1] ~= "" then
     vim.api.nvim_buf_set_extmark(state.buf, ns_bar, 0, 0, {
-      virt_text = { { text, group } },
+      virt_text = { icon },
       virt_text_pos = "inline",
       right_gravity = false,
+    })
+  end
+  if trail then
+    vim.api.nvim_buf_set_extmark(state.buf, ns_bar, 0, 0, {
+      virt_text = { trail },
+      virt_text_pos = "inline",
+      right_gravity = true,
     })
   end
 end
@@ -160,17 +194,20 @@ local function paint_selection()
   vim.api.nvim_buf_set_extmark(state.buf, ns_sel, sel, 0, { line_hl_group = hl })
 end
 
--- Measured display width of the bar (virtual prompt/hint isn't in the line text,
--- so add it explicitly) — lets "fit" layouts hug the wider of bar vs. tree.
+-- Measured display width of the bar (its virtual text isn't in the line buffer, so
+-- "fit" layouts can't see it) — lets them hug the wider of bar vs. tree. Shares
+-- bar_parts so the reserved width always matches exactly what gets painted.
 local function bar_width()
-  local search = state.cfg.search
-  if not (search and search.enabled) then
+  local icon, trail, qwidth = bar_parts()
+  if not icon then
     return 0
   end
-  if typing() or filtering() then
-    return vim.fn.strdisplaywidth((search.prompt or "") .. state.filter.query)
+  local width = qwidth or 0
+  width = width + vim.fn.strdisplaywidth(icon[1])
+  if trail then
+    width = width + vim.fn.strdisplaywidth(trail[1])
   end
-  return vim.fn.strdisplaywidth(search.hint or "")
+  return width
 end
 
 -- ── fold-level indicator (dot meter in the border title) ────────────────────
@@ -808,12 +845,12 @@ end
 -- ── live filter ──────────────────────────────────────────────────────────────
 -- Entered from normal tree navigation via the search key. Buffer line 0 becomes
 -- an editable prompt (state 2): typing narrows the outline live to matches + their
--- ancestor path, and the first match is highlighted + previewed. <CR> jumps to it;
--- <Esc> hands the *real* cursor to the narrowed tree (state 3), where j/k/l/h and
--- <CR> behave exactly as in the unfiltered outline. A second <Esc> (in normal
--- mode) clears the filter and restores the full fold-honoring tree — folds intact,
--- since filtering never mutates node.expanded. `/` from state 3 re-opens the
--- prompt (pre-filled) to refine.
+-- ancestor path, and the first match is highlighted + previewed. Any leave key
+-- (<CR>/<Esc>/<C-c>) hands the *real* cursor to the narrowed tree (state 3), where
+-- j/k/l/h browse and <CR> jumps, exactly as in the unfiltered outline. In state 3,
+-- <Esc>/<C-c> clear the filter and restore the full fold-honoring tree — folds
+-- intact, since filtering never mutates node.expanded. `/` from state 3 re-opens
+-- the prompt (pre-filled) to refine.
 
 -- The "first match" tracked while typing rides only real match rows; ancestor-
 -- context rows are skipped (they exist for hierarchy, not as results). Empty-query
@@ -859,6 +896,7 @@ local function search_update()
   end
   state.filter.query = q
   render_rows(q, true) -- keep line 0 (the user is typing it)
+  paint_bar() -- refresh the icon/hint: the example hint drops once the query is non-empty
   state.filter.sel = scan_result(1, 1) or 1
   paint_selection()
   local sel = state.rows[state.filter.sel]
@@ -867,30 +905,11 @@ local function search_update()
   end
 end
 
--- <CR> while typing: jump straight to the first match (commit). No-op with no
--- matches, leaving the user in the prompt to keep editing.
-local function search_accept()
-  if not typing() then
-    return
-  end
-  local row = state.rows[state.filter.sel]
-  if not row or not is_result(row) then
-    return
-  end
-  vim.cmd("stopinsert")
-  search_teardown()
-  state.filter.typing = false
-  local jump = state.provider.actions and state.provider.actions.jump
-  if jump then
-    jump({ node = row.node, origin_win = state.origin_win, close = M.close })
-  else
-    M.close(false)
-  end
-end
-
--- <Esc> while typing: hand the real cursor to the tree. With matches, keep the
--- filter and browse the narrowed outline (state 3), landing on the first match.
--- With an empty query, fall back to the plain unfiltered tree (state 1).
+-- Leave the editable prompt (any of <CR>/<Esc>/<C-c>): hand the real cursor to the
+-- tree. With matches, keep the filter and browse the narrowed outline (state 3),
+-- landing on the first match. With an empty query, fall back to the plain
+-- unfiltered tree (state 1). All three keys behave identically — the prompt is an
+-- edit mode you *leave* into normal browsing; jumping is then <CR> on the row.
 local function search_handoff()
   if not typing() then
     return
@@ -971,8 +990,9 @@ local function search_enter(seed)
       state.search_maps[#state.search_maps + 1] = lhs
     end
   end
-  imap(keys.accept, search_accept)
-  imap(keys.abandon, search_handoff)
+  -- Every leave key (default <CR>/<Esc>/<C-c>) exits the prompt into normal-mode
+  -- browsing of the narrowed tree; none of them jump or close.
+  imap(keys.leave, search_handoff)
 
   state.search_aucmds = {
     vim.api.nvim_create_autocmd({ "TextChangedI", "TextChanged" }, {
@@ -1360,13 +1380,16 @@ function M.populate(token, roots)
         search_enter(provider.kind_sigil)
       end, { buffer = buf, nowait = true, silent = true })
     end
-    -- Normal-mode <Esc> clears an applied filter (state 3 → 1); it does not close
-    -- the float (only q and ; do, bound by set_keys). With no filter it's a no-op.
-    vim.keymap.set("n", "<Esc>", function()
+    -- Normal-mode <Esc>/<C-c> clear an applied filter (state 3 → 1); they do not
+    -- close the float (only q and ; do, bound by set_keys). With no filter, no-op.
+    local function clear_filter()
       if filtering() then
         search_clear()
       end
-    end, { buffer = buf, nowait = true, silent = true })
+    end
+    for _, lhs in ipairs({ "<Esc>", "<C-c>" }) do
+      vim.keymap.set("n", lhs, clear_filter, { buffer = buf, nowait = true, silent = true })
+    end
   end
 
   -- Follow-mode: preview the hovered node on every cursor move within the float.
