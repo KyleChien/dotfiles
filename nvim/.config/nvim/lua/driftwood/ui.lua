@@ -3,9 +3,13 @@
 
 local tree = require("driftwood.tree")
 local window = require("driftwood.window")
+local pins = require("driftwood.pins")
 
 local M = {}
 local ns = vim.api.nvim_create_namespace("driftwood")
+-- The right-aligned pin-number badges. Its own namespace so it can be repainted
+-- on each render without touching content highlights in `ns`.
+local ns_pin = vim.api.nvim_create_namespace("driftwood_pin")
 -- Separate namespace for the follow-mode highlight painted in the *origin*
 -- buffer (the outline lives in `ns` on the float buffer).
 local ns_follow = vim.api.nvim_create_namespace("driftwood_follow")
@@ -84,7 +88,8 @@ local function compute_rows()
   if filtering() and state.provider.make_matcher then
     return tree.flatten_filtered(state.roots, state.provider.make_matcher(state.filter.query))
   end
-  return tree.flatten(state.roots)
+  -- Unfiltered: force-show pinned nodes (state.pinned may be nil → plain flatten).
+  return tree.flatten(state.roots, state.pinned)
 end
 
 -- Paint the bar's inline virtual text on line 0: the prompt glyph while filtering,
@@ -145,10 +150,15 @@ local function bar_width()
   return vim.fn.strdisplaywidth(search.hint or "")
 end
 
--- Re-fit the window to the given lines (plus the bar's virtual width).
+-- Re-fit the window to the given lines (plus the bar's virtual width, plus the
+-- pin badges' reserved width so a "fit"-width window can't clip the right-aligned
+-- badge — the badge isn't in the line text, so content_dims can't see it).
 local function refit(lines)
   local cw, ch = content_dims(lines)
   cw = math.max(cw, bar_width() + 2)
+  if state.badge_w and state.badge_w > 0 then
+    cw = cw + state.badge_w + 1
+  end
   local geo = window.compute_geometry(state.cfg, cw, ch)
   vim.api.nvim_win_set_config(state.win, window.win_config(geo, state.cfg))
 end
@@ -195,6 +205,26 @@ local function render_rows(bar_text, keep_bar_line)
     end
   end
   paint_selection()
+
+  -- Pin badges: a right-aligned virtual-text number on each visible pinned row.
+  -- Pinned even when a filter hides its force-show — a matching pinned row still
+  -- shows its (document-order) number. Reserve the widest badge for "fit" sizing.
+  vim.api.nvim_buf_clear_namespace(state.buf, ns_pin, 0, -1)
+  state.badge_w = 0
+  if state.pin_num and next(state.pin_num) and not no_match then
+    local phl = (cfg.pins and cfg.pins.hl) or "Number"
+    for i, row in ipairs(state.rows) do
+      local n = state.pin_num[row.node]
+      if n then
+        local label = " " .. n .. " "
+        vim.api.nvim_buf_set_extmark(state.buf, ns_pin, i, 0, {
+          virt_text = { { label, phl } },
+          virt_text_pos = "right_align",
+        })
+        state.badge_w = math.max(state.badge_w, vim.fn.strdisplaywidth(label))
+      end
+    end
+  end
 
   local measured = { bar_text }
   vim.list_extend(measured, tree_lines)
@@ -297,6 +327,90 @@ local function follow_preview(node)
       vim.cmd("normal! zz")
     end
   end)
+end
+
+-- ── pins (on-disk, force-shown, number-jumped) ───────────────────────────────
+-- The store (driftwood.pins) is generic; identity is provider-owned via pin_key/
+-- pin_match. state carries three derived tables: `pinned` (node-set, for force-show),
+-- `pin_num` (node -> number) and `pin_bynum` (number -> node, for digit jumps).
+
+local function pins_enabled()
+  return state and state.cfg.pins and state.cfg.pins.enabled and state.origin_path ~= ""
+    and state.provider.pin_key and state.provider.pin_match
+end
+
+-- Number the pinned nodes 1..N by document order (pre-order = display order), so a
+-- pin's number is stable regardless of folds or the active filter.
+local function number_pins(roots, pinned)
+  local num, bynum, n = {}, {}, 0
+  local function walk(nodes)
+    for _, node in ipairs(nodes) do
+      if pinned[node] then
+        n = n + 1
+        num[node] = n
+        bynum[n] = node
+      end
+      if node.children then
+        walk(node.children)
+      end
+    end
+  end
+  walk(roots)
+  return num, bynum
+end
+
+-- Rebuild the derived pin tables from the on-disk store: re-match every stored key
+-- against the freshly-fetched tree, prune keys that no longer resolve (rewriting
+-- the store), then renumber. Cheap; run on open and after each toggle.
+local function refresh_pins()
+  state.pinned, state.pin_num, state.pin_bynum = {}, {}, {}
+  if not pins_enabled() then
+    return
+  end
+  local keys = pins.get(state.origin_path)
+  local kept, pinned = {}, {}
+  for _, key in ipairs(keys) do
+    local node = state.provider.pin_match(state.roots, key)
+    if node then
+      pinned[node] = true
+      kept[#kept + 1] = key
+    end
+  end
+  if #kept ~= #keys then -- something was pruned
+    pins.set_keys(state.origin_path, kept)
+  end
+  state.pinned = pinned
+  state.pin_num, state.pin_bynum = number_pins(state.roots, pinned)
+end
+
+-- Toggle the pin on the row under the cursor: flip it in the store, rebuild the
+-- derived tables, re-render (force-show + badges shift), keep the cursor put.
+local function pin_toggle()
+  if not pins_enabled() then
+    return
+  end
+  local row = current_row()
+  if not row then
+    return
+  end
+  pins.toggle(state.origin_path, state.provider.pin_key(row.node))
+  refresh_pins()
+  render()
+  move_cursor_to_node(row.node)
+end
+
+-- Jump to the pinned symbol numbered `n` (digit keys), if any — commits + closes
+-- via the provider's jump, exactly like <CR>. Resolves through the pin set, so it
+-- works even when the active filter currently hides that pin.
+local function pin_jump(n)
+  local node = state.pin_bynum and state.pin_bynum[n]
+  if not node then
+    return
+  end
+  local jump = state.provider.actions and state.provider.actions.jump
+  if jump then
+    jump({ node = node, origin_win = state.origin_win, close = M.close })
+  end
 end
 
 -- ── actions (the rebindable behavior surface) ────────────────────────────────
@@ -739,13 +853,34 @@ function M.open(provider, roots, cfg, origin)
     origin_win = origin.win,
     origin_buf = origin_buf,
     origin_view = origin_view,
+    origin_path = vim.api.nvim_buf_get_name(origin_buf),
     follow_node = nil,
     filter = { query = "", sel = 1, typing = false },
+    pinned = nil,
+    pin_num = nil,
+    pin_bynum = nil,
+    badge_w = 0,
   }
 
+  refresh_pins() -- load + prune the file's pins before the first render
   render()
   set_keys(buf, cfg, provider)
   set_layout_keys(buf, cfg)
+
+  -- Pins: `p` toggles the row's pin; the jump_keys (1..9) jump to a pin by number.
+  if pins_enabled() then
+    if cfg.pins.key then
+      vim.keymap.set("n", cfg.pins.key, pin_toggle, { buffer = buf, nowait = true, silent = true })
+    end
+    for _, k in ipairs(cfg.pins.jump_keys or {}) do
+      local n = tonumber(k)
+      if n then
+        vim.keymap.set("n", k, function()
+          pin_jump(n)
+        end, { buffer = buf, nowait = true, silent = true })
+      end
+    end
+  end
 
   if cfg.search and cfg.search.enabled then
     -- `/` opens the editable prompt (state 1/3 → 2).

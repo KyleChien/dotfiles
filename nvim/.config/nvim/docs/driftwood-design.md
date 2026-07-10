@@ -27,6 +27,13 @@ actually exists. Everything below is scoped by that discipline.
 | 7a | Layout persistence | Sticky **in-session** (module-level `last_layout[provider]`); resets on nvim restart |
 | 7b | Content freshness | Snapshot on open; no auto-refresh (reopen to refresh) |
 | 8 | Live filter | Permanent top-line search bar; `/` opens an editable prompt that narrows the outline live to matches + ancestors. Query is a name substring (smartcase) or `@kind` (prefix over SymbolKind names, `@function foo` ANDs a name). `<CR>` jumps to the first match, `<Esc>` hands the **real cursor** to the narrowed tree (`j/k/l/h` browse it as normal); a second `<Esc>` clears the filter; non-destructive to folds |
+| 9 | Pinned symbols | `p` toggles a pin on the row; pinned symbols carry a right-aligned number badge, are numbered by document order, force-shown under collapsed parents, and jumped to with `1`–`9`. Pins persist **on disk** (single JSON), keyed by name+kind+ancestor-path, pruned when they no longer match. Shell owns the store/window/keys; the provider supplies `pin_key`/`pin_match` |
+
+> Decision 9 deliberately reopens two earlier ones: **7b** (content is otherwise
+> no-disk state — pins are the one exception, a tiny JSON store) and it was
+> considered against **4** (a first sketch used a second sticky footer float; it
+> was dropped in favor of in-place badges to keep the singleton-float model and
+> the plugin's "keep everything simple" ethos).
 
 ## Config boundary — window vs content
 
@@ -90,6 +97,12 @@ require("driftwood").setup({
         },
         hl = { match = "Search", context = "Comment", selection = "Visual" },
       },
+      pins = {                             -- pinned symbols (on-disk, name+kind+path keyed)
+        enabled = true,
+        key = "p",                         -- toggle a pin on the current row
+        jump_keys = { "1", "2", "3", "4", "5", "6", "7", "8", "9" }, -- jump to pin N
+        hl = "Number",                     -- right-aligned badge highlight
+      },
       icons = { --[[ SymbolKind → glyph ]] },
       kind_hl = { --[[ SymbolKind → hl group ]] },
     },
@@ -139,6 +152,7 @@ A provider supplies, informally (no enforced interface yet):
 - `render(row, layout, cfg)` → `text, segments` — the layout-aware line builder.
 - `actions` — its action table (`jump` etc.); the generic `down/up/expand/collapse/close` live in the shell.
 - `make_matcher(query)` → `fn(node) -> false | { span }` — the live-filter predicate. The shell force-shows matched nodes + ancestors; `span` is an optional 0-based name-highlight range (nil for a match with nothing to underline). Provider-owned because only it knows what a `SymbolKind` is named.
+- `pin_key(node)` → `string` and `pin_match(roots, key)` → `node | nil` — the pin identity pair (mirrors `make_matcher`). Provider-owned because only it knows what makes a symbol stably identifiable; the shell owns the store, badges, keys, and numbering.
 - static tables: `icons`, `kind_hl`, defaults.
 
 The shell (`window` + `render` + `tree`) never mentions symbols, LSP, or ranges.
@@ -200,6 +214,56 @@ The shell (`window` + `render` + `tree`) never mentions symbols, LSP, or ranges.
   close the float. Only `q`/`;` close. No matches → a
   dimmed `placeholder` line, nothing to jump to. Disabled → no bar, no key, no
   `<Esc>` override, zero change.
+
+- **Pinned symbols (`providers.symbols.pins`):** `p` (config `pins.key`) toggles a
+  pin on the row under the cursor. Pins are a stable-identity, on-disk concept, so
+  they survive close/reopen **and** nvim restart — the one exception to the
+  otherwise no-disk snapshot model (decision 7b).
+
+  *Identity + store (shell-owned, generic).* A pin is a **string key**, not a node
+  reference (nodes are freshly fetched every open). The key is provider-built —
+  for `symbols`, `pin_key(node)` = the `kind:name` path from the root down to the
+  node (`5:MyClass/6:handle`), stable across the symbol moving lines and
+  disambiguating same-named symbols by their container path. The store is a single
+  JSON file at `stdpath("data")/driftwood/pins.json`: `{ [abs_path] = { key, … } }`,
+  loaded once into a module table and **written through on every toggle** (tiny
+  file; durable against a crash, no save-on-exit). The file key is the origin
+  buffer's absolute path; an unnamed/scratch buffer has no path, so pins no-op.
+
+  *Prune on open.* Symbols are re-fetched each open, so on open the shell runs
+  `provider.pin_match(roots, key)` for every stored key of that file and **drops
+  any key that no longer matches** (renamed/deleted symbol), rewriting the store if
+  it changed. There is no persistent "stale pin" state — a pin either resolves to a
+  live node or is pruned.
+
+  *Numbering + badge.* The matched pinned nodes are numbered **1..N by document
+  order** (a pre-order walk of `roots` = top-to-bottom display order), so a pin's
+  number is stable and independent of folds or the active filter. Each pinned
+  node's row draws its number as a **right-aligned virtual-text extmark**
+  (`virt_text_pos = "right_align"`, its own `ns_pin` namespace, `pins.hl`), so the
+  badge sits at the window's right edge in every layout without padding the buffer
+  text or perturbing `"fit"` sizing — the one adjustment is that `refit` reserves
+  the badge's width so a `"fit"`-width window can't clip it. It coexists with the
+  `center` layout's `show_lnum` (that's mid-row text; the badge floats at the edge).
+
+  *Force-show under folds.* Pinned nodes must be visible even inside a collapsed
+  ancestor. `tree.flatten(roots, pinned)` takes the pinned set and, when it
+  descends into a collapsed branch, emits **only** pinned descendants plus the
+  ancestor chain down to them (ancestors flagged `is_context`, rendered dimmed like
+  the filter's context rows). The collapsing parent keeps its collapsed chevron yet
+  still shows the pinned child beneath it — the accepted oddity that makes "always
+  visible" hold. With no pins the walk is byte-for-byte the old fold-honoring
+  flatten. Force-show applies **only to the unfiltered view**: under an active
+  filter the matcher alone decides rows (pinned non-matches are *not* forced in),
+  though a pinned row that *does* match still shows its badge.
+
+  *Jump.* `1`–`9` (config `pins.jump_keys`), bound in the float, jump to that pin
+  number via the provider's `jump` action (commits + closes, exactly like `<CR>`).
+  It resolves through the pin set, so it works even when the filter currently hides
+  that pin. Cost: digits shadow vim count-prefixes inside the float (rebindable to a
+  leader). In the typing state the caret is on the prompt (insert mode), so digits
+  type into the query instead. Disabled (or scratch buffer) → no badges, no `p`, no
+  digit keys, zero change.
 
 ## Implementation sequence (safe, incremental)
 

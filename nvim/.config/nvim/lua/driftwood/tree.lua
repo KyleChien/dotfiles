@@ -33,24 +33,41 @@ end
 -- Each row: { node, depth, has_children, expanded }
 --   expanded → whether the chevron should read as open (drives rendering; under
 --   a filter it can differ from node.expanded, which filtering never mutates).
-function M.flatten(roots)
-  local rows = {}
-  local function walk(nodes, depth)
+--
+-- `pinned` (optional node-set) force-shows pinned nodes even inside a collapsed
+-- ancestor: on descending into a folded branch we keep only pinned descendants
+-- plus the ancestor chain down to them (those ancestors flagged is_context, drawn
+-- dimmed). The folded parent keeps its collapsed chevron yet still shows its
+-- pinned child. With no pinned set this is the plain fold-honoring flatten.
+function M.flatten(roots, pinned)
+  -- `forced` = we're inside a collapsed branch, so only pinned nodes and the
+  -- ancestors on the path to a pinned descendant may surface.
+  local function walk(nodes, depth, forced)
+    local acc = {}
     for _, node in ipairs(nodes) do
       local has_children = node.children ~= nil and #node.children > 0
-      rows[#rows + 1] = {
-        node = node,
-        depth = depth,
-        has_children = has_children,
-        expanded = has_children and node.expanded,
-      }
-      if has_children and node.expanded then
-        walk(node.children, depth + 1)
+      local is_pinned = pinned and pinned[node] or false
+      -- Children are forced when we already are, or when this branch is folded.
+      local child_forced = forced or (has_children and not node.expanded)
+      local child_rows = has_children and walk(node.children, depth + 1, child_forced) or {}
+      -- Outside a fold every node shows; inside one, only pins and their ancestors.
+      local show = (not forced) or is_pinned or #child_rows > 0
+      if show then
+        acc[#acc + 1] = {
+          node = node,
+          depth = depth,
+          has_children = has_children,
+          expanded = has_children and node.expanded,
+          is_context = (forced and not is_pinned) or nil,
+        }
+        for _, r in ipairs(child_rows) do
+          acc[#acc + 1] = r
+        end
       end
     end
+    return acc
   end
-  walk(roots, 0)
-  return rows
+  return walk(roots, 0, false)
 end
 
 -- Filtered flatten: return only rows on a path to a match, ignoring fold state

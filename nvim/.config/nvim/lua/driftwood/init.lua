@@ -126,6 +126,22 @@ M.config = {
         },
       },
 
+      -- Pinned symbols. Press `key` on a row to pin/unpin it; pinned symbols carry
+      -- a right-aligned number badge, are numbered by document order (top→bottom),
+      -- stay visible even inside a collapsed parent, and are jumped to with the
+      -- `jump_keys` (1..9) while the float is open. Pins persist on disk (keyed by
+      -- name+kind+ancestor-path) and are pruned when a symbol no longer matches.
+      --   enabled   → on/off switch for the whole feature.
+      --   key       → normal-mode key (inside the float) that toggles the row's pin.
+      --   jump_keys → keys that jump to pin N (also shadow vim counts in the float).
+      --   hl        → highlight group for the number badge.
+      pins = {
+        enabled = true,
+        key = "p",
+        jump_keys = { "1", "2", "3", "4", "5", "6", "7", "8", "9" },
+        hl = "Number",
+      },
+
       -- Non-kind highlights. Kind highlights are in `kind_hl` below.
       hl = { chevron = "Comment", name = "Normal", lnum = "Comment" },
 
@@ -203,6 +219,7 @@ local function resolve_config(global, pcfg)
     keys = pcfg.keys,
     follow = pcfg.follow,
     search = pcfg.search,
+    pins = pcfg.pins,
     chevron = pcfg.chevron,
     hl = pcfg.hl,
     icons = pcfg.icons,

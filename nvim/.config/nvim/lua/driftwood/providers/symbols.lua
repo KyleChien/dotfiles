@@ -249,6 +249,51 @@ function M.render(row, cfg, layout)
   return text, spans
 end
 
+-- ── pins: stable identity for the shell's pin store ──────────────────────────
+-- A pin is a string key (not a node — nodes are re-fetched every open). The shell
+-- owns the on-disk store, badges, keys and numbering; the provider only says what
+-- makes a symbol stably identifiable. Here that's the `kind:name` path from the
+-- root down to the node, which survives the symbol moving lines and disambiguates
+-- same-named symbols by their container path. Requires `node.parent` (set by
+-- tree.prepare on open).
+
+function M.pin_key(node)
+  local parts = {}
+  local n = node
+  while n do
+    parts[#parts + 1] = (n.kind or "?") .. ":" .. (n.name or "?")
+    n = n.parent
+  end
+  -- parts is leaf→root; reverse to root→leaf so the key reads top-down.
+  local rev = {}
+  for i = #parts, 1, -1 do
+    rev[#rev + 1] = parts[i]
+  end
+  return table.concat(rev, "/")
+end
+
+-- Re-locate a stored key against a freshly-fetched tree, or nil if it's gone
+-- (symbol renamed/deleted → the shell prunes it). First match in pre-order.
+function M.pin_match(roots, key)
+  local found
+  local function walk(nodes)
+    for _, node in ipairs(nodes) do
+      if found then
+        return
+      end
+      if M.pin_key(node) == key then
+        found = node
+        return
+      end
+      if node.children then
+        walk(node.children)
+      end
+    end
+  end
+  walk(roots)
+  return found
+end
+
 -- ── actions ──────────────────────────────────────────────────────────────────
 
 M.actions = {}
