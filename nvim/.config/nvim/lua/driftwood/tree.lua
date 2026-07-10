@@ -79,10 +79,33 @@ end
 -- symbol-agnostic — it never inspects node.name or node.kind itself.
 --   Each row adds: match_span = { s, e } (the matcher's span, only on rows that
 --   matched themselves) and is_context = true on ancestor-only rows.
+-- A matcher result may also carry `scope = true`: the matched node is shown with
+-- its (loaded) subtree, but honoring each branch's fold state (node.expanded) — so
+-- scoping respects the current fold level rather than blowing the whole subtree
+-- open. The files provider uses this for `@folder` scoping; symbols never sets it.
 -- Returns the row list (possibly empty when nothing matches).
 function M.flatten_filtered(roots, matcher)
   if not matcher then
     return M.flatten(roots)
+  end
+
+  -- Emit `node` and its subtree, descending only into expanded branches — a scoped
+  -- hit renders at the active fold level, not fully unfolded. Only the scoped root
+  -- carries the match span.
+  local function dump(node, depth, acc, span)
+    local has_children = node.children ~= nil and #node.children > 0
+    acc[#acc + 1] = {
+      node = node,
+      depth = depth,
+      has_children = has_children,
+      expanded = has_children and node.expanded,
+      match_span = span,
+    }
+    if has_children and node.expanded then
+      for _, child in ipairs(node.children) do
+        dump(child, depth + 1, acc, nil)
+      end
+    end
   end
 
   -- Build the visible rows for `nodes`. A node is kept when it matches itself or
@@ -92,19 +115,23 @@ function M.flatten_filtered(roots, matcher)
     local acc = {}
     for _, node in ipairs(nodes) do
       local m = matcher(node)
-      local has_children = node.children ~= nil and #node.children > 0
-      local child_rows = has_children and build(node.children, depth + 1) or {}
-      if m or #child_rows > 0 then
-        acc[#acc + 1] = {
-          node = node,
-          depth = depth,
-          has_children = has_children,
-          expanded = #child_rows > 0, -- open only when we actually reveal children
-          match_span = m and m.span or nil,
-          is_context = not m, -- ancestor-only rows (no self-match) render dimmed
-        }
-        for _, r in ipairs(child_rows) do
-          acc[#acc + 1] = r
+      if m and m.scope then
+        dump(node, depth, acc, m.span) -- scoped hit: node + everything under it
+      else
+        local has_children = node.children ~= nil and #node.children > 0
+        local child_rows = has_children and build(node.children, depth + 1) or {}
+        if m or #child_rows > 0 then
+          acc[#acc + 1] = {
+            node = node,
+            depth = depth,
+            has_children = has_children,
+            expanded = #child_rows > 0, -- open only when we actually reveal children
+            match_span = m and m.span or nil,
+            is_context = not m, -- ancestor-only rows (no self-match) render dimmed
+          }
+          for _, r in ipairs(child_rows) do
+            acc[#acc + 1] = r
+          end
         end
       end
     end

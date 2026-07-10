@@ -218,6 +218,94 @@ M.config = {
         [26] = "Type", -- TypeParameter
       },
     },
+
+    -- The file-tree provider: an nvim-tree-like recursive view with oil-style
+    -- editing. Reuses the shell's layout/fold/pin/search machinery; adds lazy
+    -- per-expand directory scanning and an edit mode. See providers/files.lua.
+    files = {
+      key = ",",
+      layout = "left",
+      title = " Files ",
+
+      -- Tree root; nil = the current working directory.
+      root = nil,
+
+      -- The whole tree is scanned on open, so any depth works: 0 opens fully folded
+      -- (top-level entries only), a number opens that many levels, "all" opens
+      -- everything. Dynamic fold (</>, zM/zR) works over the full depth.
+      initial_depth = 0,
+
+      keys = {
+        down = "j",
+        up = "k",
+        expand = "l",
+        collapse = "h",
+        -- <CR> opens a file, or toggles a directory (loading it lazily).
+        activate = "<CR>",
+        expand_all = "zR",
+        collapse_all = "zM",
+        fold_less = "<",
+        fold_more = ">",
+        -- Oil-style editing: `i` makes the tree editable text; `<C-s>` diffs + applies
+        -- (with a confirm preview), `<C-c>` discards.
+        edit = "i",
+        commit = "<C-s>",
+        abort = "<C-c>",
+        -- Reveal/hide dotfiles + gitignored paths.
+        toggle_hidden = ".",
+        close = { "q", "," },
+      },
+
+      -- No buffer-position nodes, so follow-preview is off (and find_enclosing is
+      -- skipped — the cursor just lands on the first row).
+      follow = { enabled = false },
+
+      -- Behavior toggles for the fs layer (providers/files.lua + driftwood.fs).
+      --   show_hidden   → show dotfiles (toggle at runtime with `.`).
+      --   gitignore     → drop gitignored paths (when inside a git repo).
+      --   trash_cmd     → optional { "cmd", "args" } to trash a path; else a `trash`
+      --                   binary on PATH, else macOS Finder. Never a hard rm.
+      files_opts = { show_hidden = false, gitignore = true, trash_cmd = nil },
+
+      -- Edit-mode bar hint (shown on line 0 while editing).
+      edit = { hint = "-- EDIT — write:<C-s>  abort:<C-c> --" },
+
+      search = {
+        enabled = true,
+        key = "/",
+        -- `/name` filters by name; `@dir` scopes the tree to matching folders.
+        hint = "/ name  @scope",
+        prompt = "/ ",
+        placeholder = "(no matches)",
+        keys = { accept = "<CR>", abandon = "<Esc>" },
+        hl = {
+          prompt = "Comment",
+          hint = "Comment",
+          query = "Normal",
+          match = "Search",
+          context = "Comment",
+          selection = "Visual",
+          placeholder = "Comment",
+        },
+      },
+
+      -- Pins are keyed per tree root (see providers/files.lua pin_scope), so a
+      -- project's pinned files are shared regardless of the focused buffer.
+      pins = {
+        enabled = true,
+        key = "p",
+        jump_keys = { "1", "2", "3", "4", "5", "6", "7", "8", "9" },
+        hl = "Number",
+      },
+
+      fold = { filled = "●", empty = "○", hl = "Number" },
+      chevron = { expanded = "▾", collapsed = "▸" },
+
+      -- File-tree icons: directory (closed/open) + file fallback.
+      icons = { dir = "", dir_open = "", file = "", default = "" },
+
+      hl = { chevron = "Comment", name = "Normal", dir = "Directory" },
+    },
   },
 }
 
@@ -237,6 +325,10 @@ local function resolve_config(global, pcfg)
     icons = pcfg.icons,
     kind_hl = pcfg.kind_hl,
     content = pcfg.content,
+    -- files-provider extras (nil for symbols).
+    root = pcfg.root,
+    files_opts = pcfg.files_opts,
+    edit = pcfg.edit,
     layout_keys = global.layout_keys,
     window = {
       layout = pcfg.layout,
@@ -285,9 +377,11 @@ function M.toggle(name)
   -- window that was closed or replaced in the meantime. An empty result renders a
   -- "No symbols" message in place, keeping the float open.
   local token = ui.open_loading(provider, cfg, origin)
+  -- cfg is passed through as a 3rd arg for providers that need it (e.g. files, for
+  -- its root + scan options); symbols ignores it.
   provider.fetch(bufnr, function(roots)
     ui.populate(token, roots)
-  end)
+  end, cfg)
 end
 
 return M

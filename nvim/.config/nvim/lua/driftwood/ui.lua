@@ -18,6 +18,9 @@ local ns_bar = vim.api.nvim_create_namespace("driftwood_bar")
 -- The first-match highlight painted while typing a query. Its own namespace so it
 -- can be repainted on each keystroke without touching the content highlights in `ns`.
 local ns_sel = vim.api.nvim_create_namespace("driftwood_sel")
+-- Edit mode (oil-style): one extmark per editable line, tagging it with its source
+-- node so the commit diff can tell rename/move (mark survived) from create (no mark).
+local ns_edit = vim.api.nvim_create_namespace("driftwood_edit")
 
 -- The float reserves buffer line 0 for the search bar; the tree occupies lines
 -- 1..N. So tree row i (1-based, into state.rows) lives on 0-based buffer line i,
@@ -45,12 +48,14 @@ local state = nil
 -- Cleared on nvim restart; never written to disk.
 local last_layout = {}
 
--- Sticky-in-session fold level, scoped per file: "provider\0path" -> last level the
--- user set (via </>, zM/zR). Restored on the next open of that same file in place of
--- the configured initial_depth. Like last_layout: session-only, never persisted.
+-- Sticky-in-session fold level, keyed by the provider's fold scope:
+-- "provider\0scope" -> last level the user set (via </>, zM/zR). The scope is the
+-- provider's fold_scope (files: the tree root, so a project's depth is shared) or
+-- the origin file (symbols: per-file). Restored on the next open with the same
+-- scope in place of the configured initial_depth. Session-only, never persisted.
 local last_fold_level = {}
 local function fold_key()
-  return state.provider.name .. "\0" .. (state.origin_path or "")
+  return state.provider.name .. "\0" .. (state.fold_scope or "")
 end
 
 -- ── rendering ──────────────────────────────────────────────────────────────
@@ -89,6 +94,12 @@ end
 -- the caret pinned to the bar, and the first-match highlight painted.
 local function typing()
   return state and state.filter and state.filter.typing
+end
+
+-- Is oil-style edit mode active? The whole tree buffer is editable text; browse
+-- actions (fold, filter, pins, layout) stand down until commit/abort.
+local function editing()
+  return state and state.edit and state.edit.active
 end
 
 -- The rows to display: filtered when a non-empty query is in effect, else the
@@ -286,6 +297,19 @@ local function render()
   paint_bar()
 end
 
+-- Force-open every ancestor of `node` so the node itself becomes visible, no matter
+-- the current fold level. A targeted reveal (used to surface the focused file on
+-- open) — like pins' force-show, it doesn't touch the fold meter / level.
+local function reveal_ancestors(node)
+  local n = node.parent
+  while n do
+    if n.children and #n.children > 0 then
+      n.expanded = true
+    end
+    n = n.parent
+  end
+end
+
 -- Move the cursor to `node`'s row; if it's not visible, climb to the nearest
 -- visible ancestor. Falls back to the first tree row (buffer line 1 is the bar).
 local function move_cursor_to_node(node)
@@ -380,8 +404,15 @@ end
 -- pin_match. state carries three derived tables: `pinned` (node-set, for force-show),
 -- `pin_num` (node -> number) and `pin_bynum` (number -> node, for digit jumps).
 
+-- The on-disk pin store key. Defaults to the origin file (symbols: pins are per
+-- file); a provider may override via pin_scope (files: pins are per tree root, so
+-- they're shared regardless of which buffer was focused on open).
+local function pin_scope()
+  return state and state.pin_scope or ""
+end
+
 local function pins_enabled()
-  return state and state.cfg.pins and state.cfg.pins.enabled and state.origin_path ~= ""
+  return state and state.cfg.pins and state.cfg.pins.enabled and pin_scope() ~= ""
     and state.provider.pin_key and state.provider.pin_match
 end
 
@@ -413,17 +444,17 @@ local function refresh_pins()
   if not pins_enabled() then
     return
   end
-  local keys = pins.get(state.origin_path)
+  local keys = pins.get(pin_scope())
   local kept, pinned = {}, {}
   for _, key in ipairs(keys) do
-    local node = state.provider.pin_match(state.roots, key)
+    local node = state.provider.pin_match(state.roots, key, state.cfg)
     if node then
       pinned[node] = true
       kept[#kept + 1] = key
     end
   end
   if #kept ~= #keys then -- something was pruned
-    pins.set_keys(state.origin_path, kept)
+    pins.set_keys(pin_scope(), kept)
   end
   state.pinned = pinned
   state.pin_num, state.pin_bynum = number_pins(state.roots, pinned)
@@ -432,14 +463,18 @@ end
 -- Toggle the pin on the row under the cursor: flip it in the store, rebuild the
 -- derived tables, re-render (force-show + badges shift), keep the cursor put.
 local function pin_toggle()
-  if not pins_enabled() then
+  if not pins_enabled() or editing() then
     return
   end
   local row = current_row()
   if not row then
     return
   end
-  pins.toggle(state.origin_path, state.provider.pin_key(row.node))
+  -- A provider may forbid pinning some nodes (files: folders aren't pinnable).
+  if state.provider.can_pin and not state.provider.can_pin(row.node) then
+    return
+  end
+  pins.toggle(pin_scope(), state.provider.pin_key(row.node))
   refresh_pins()
   render()
   move_cursor_to_node(row.node)
@@ -459,13 +494,51 @@ local function pin_jump(n)
   end
 end
 
+-- Re-fetch the whole tree from the provider and re-render (used after an edit-mode
+-- commit mutates the filesystem). Resets folds/filter to a fresh open; pins are
+-- re-matched against the new tree.
+local function reload_tree()
+  if not state then
+    return
+  end
+  local cfg = state.cfg
+  state.provider.fetch(state.origin_buf, function(roots)
+    if not state then
+      return
+    end
+    roots = roots or {}
+    tree.prepare(roots, cfg.initial_depth)
+    state.roots = roots
+    state.max_level = tree.max_level(roots)
+    state.filter = { query = "", sel = 1, typing = false }
+    refresh_pins()
+    render()
+    local last = vim.api.nvim_buf_line_count(state.buf)
+    vim.api.nvim_win_set_cursor(state.win, { math.min(2, last), 0 })
+  end, cfg)
+end
+
+-- Leave edit mode's editable state (drop the line-tracking extmarks, make the
+-- buffer read-only again). Callers follow with render() or reload_tree().
+local function exit_edit()
+  if not state then
+    return
+  end
+  state.edit = nil
+  vim.api.nvim_buf_clear_namespace(state.buf, ns_edit, 0, -1)
+  vim.bo[state.buf].modifiable = false
+end
+
 -- ── actions (the rebindable behavior surface) ────────────────────────────────
 
 local actions = {}
 
 function actions.down()
   local line = vim.api.nvim_win_get_cursor(state.win)[1]
-  if line - 1 < #state.rows then -- a next tree row exists
+  -- In edit mode the buffer holds arbitrary edited lines (not state.rows), so bound
+  -- the cursor by the real line count instead.
+  local last = editing() and vim.api.nvim_buf_line_count(state.buf) - 1 or #state.rows
+  if line - 1 < last then -- a next line exists
     vim.api.nvim_win_set_cursor(state.win, { line + 1, 0 })
   end
 end
@@ -481,7 +554,7 @@ function actions.expand()
   -- Under a filter, matches are force-shown regardless of fold state, so folding
   -- is inert; mutating node.expanded here would also corrupt the folds we promise
   -- to restore on clear. Stand down (the row is already as expanded as it gets).
-  if filtering() then
+  if filtering() or editing() then
     return
   end
   local row = current_row()
@@ -493,6 +566,9 @@ function actions.expand()
 end
 
 function actions.collapse()
+  if editing() then
+    return
+  end
   local row = current_row()
   if not row then
     return
@@ -522,7 +598,7 @@ local function remember_fold_level(level)
 end
 
 function actions.expand_all()
-  if filtering() then -- folds are inert under a filter; leave them intact
+  if filtering() or editing() then -- folds are inert under a filter; leave them intact
     return
   end
   local row = current_row()
@@ -535,7 +611,7 @@ function actions.expand_all()
 end
 
 function actions.collapse_all()
-  if filtering() then -- folds are inert under a filter; leave them intact
+  if filtering() or editing() then -- folds are inert under a filter; leave them intact
     return
   end
   local row = current_row()
@@ -553,6 +629,9 @@ end
 -- redraws to match. Clamped to [0, max_level]; a no-op at the ends and under a
 -- filter (where folds are inert and must stay intact for the clear-to-restore).
 local function set_fold_level(level)
+  if editing() then
+    return
+  end
   level = math.max(0, math.min(level, state.max_level or 0))
   if level == state.fold_level then
     return
@@ -582,6 +661,148 @@ end
 
 function actions.close()
   M.close(true)
+end
+
+-- ── activate / lazy dirs / hidden toggle ─────────────────────────────────────
+
+-- Generic "open or toggle" for tree providers with expandable containers: on a
+-- branch (directory) toggle its fold (loading children first); on a leaf (file)
+-- run the provider's jump. Opt-in via cfg.keys.activate (files maps it to <CR>).
+function actions.activate()
+  if editing() then
+    return
+  end
+  local row = current_row()
+  if not row then
+    return
+  end
+  if row.has_children then
+    if row.node.expanded then
+      actions.collapse()
+    else
+      actions.expand()
+    end
+  else
+    local jump = state.provider.actions and state.provider.actions.jump
+    if jump then
+      jump({ node = row.node, origin_win = state.origin_win, close = M.close })
+    end
+  end
+end
+
+-- Flip a provider's hidden-file visibility (dotfiles/gitignore) and reload. No-op
+-- for providers without the hook.
+function actions.toggle_hidden()
+  if editing() or not state.provider.toggle_hidden then
+    return
+  end
+  state.provider.toggle_hidden()
+  reload_tree()
+end
+
+-- ── oil-style edit mode ──────────────────────────────────────────────────────
+-- `edit` flips the tree buffer into editable text (each row re-serialized to a
+-- clean `indent + name` line, tagged with a line-tracking extmark). `commit`
+-- diffs the edits into a file-op list, previews it, and applies on confirm;
+-- `abort` discards. Gated on the provider declaring `editable` + the edit hooks.
+
+function actions.edit()
+  if not state or filtering() or editing() then
+    return
+  end
+  if not (state.provider.editable and state.provider.edit_serialize) then
+    return
+  end
+  local buf = state.buf
+  -- Clean the float of browse decorations (content hl, pin badges, selection, bar).
+  vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+  vim.api.nvim_buf_clear_namespace(buf, ns_pin, 0, -1)
+  vim.api.nvim_buf_clear_namespace(buf, ns_sel, 0, -1)
+  vim.api.nvim_buf_clear_namespace(buf, ns_bar, 0, -1)
+  vim.api.nvim_buf_clear_namespace(buf, ns_edit, 0, -1)
+
+  local originals = {}
+  local lines = {}
+  for i, row in ipairs(state.rows) do
+    lines[i] = state.provider.edit_serialize(row)
+    originals[#originals + 1] = { path = row.node.path, is_dir = row.node.is_dir }
+  end
+  state.edit = { active = true, by_id = {}, originals = originals }
+
+  local hint = (state.cfg.edit and state.cfg.edit.hint) or "-- EDIT — write:<C-s>  abort:<C-c> --"
+  state.rendering = true
+  vim.bo[buf].modifiable = true
+  local all = { hint }
+  vim.list_extend(all, lines)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, all)
+  state.rendering = false
+  add_hl(0, 0, #hint, (state.cfg.search and state.cfg.search.hl and state.cfg.search.hl.prompt) or "Comment")
+
+  -- Tag each content line (tree row i → buffer line i) with its source path, so the
+  -- commit diff can pair edited lines back to the nodes they came from.
+  for i, row in ipairs(state.rows) do
+    local id = vim.api.nvim_buf_set_extmark(buf, ns_edit, i, 0, { right_gravity = false })
+    state.edit.by_id[id] = row.node.path
+  end
+  vim.wo[state.win].cursorline = true
+end
+
+function actions.abort()
+  if not editing() then
+    return
+  end
+  exit_edit()
+  render()
+  local last = vim.api.nvim_buf_line_count(state.buf)
+  vim.api.nvim_win_set_cursor(state.win, { math.min(2, last), 0 })
+end
+
+function actions.commit()
+  if not editing() then
+    return
+  end
+  local buf = state.buf
+  local raw = vim.api.nvim_buf_get_lines(buf, 1, -1, false) -- skip bar line 0
+
+  -- Map each current buffer line (0-based) to the path it originally held, via the
+  -- surviving extmarks. A line with no mark is a freshly typed one (→ create).
+  local line_path = {}
+  for _, mk in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns_edit, 0, -1, {})) do
+    line_path[mk[2]] = state.edit.by_id[mk[1]]
+  end
+  local entries = {}
+  for idx, text in ipairs(raw) do
+    entries[#entries + 1] = { text = text, orig_id = line_path[idx] } -- raw[idx] is buffer line idx
+  end
+
+  local tree_root = pin_scope()
+  if tree_root == "" then
+    tree_root = state.origin_path
+  end
+  local ops = state.provider.parse_edit(entries, state.edit.originals, tree_root)
+  if #ops == 0 then
+    exit_edit()
+    render()
+    return
+  end
+
+  local preview = state.provider.preview_ops(ops)
+  local choice =
+    vim.fn.confirm("Apply file changes?\n\n" .. table.concat(preview, "\n"), "&Yes\n&No", 2)
+  if choice ~= 1 then
+    return -- stay in edit mode so the user can adjust
+  end
+
+  state.provider.apply_ops(ops, function(errors)
+    if not state then
+      return
+    end
+    if errors and #errors > 0 then
+      vim.notify("driftwood: " .. table.concat(errors, "; "), vim.log.levels.ERROR)
+    end
+    exit_edit()
+    reload_tree()
+  end, state.cfg)
 end
 
 -- ── live filter ──────────────────────────────────────────────────────────────
@@ -724,7 +945,7 @@ end
 -- when the query already starts with it, so refining doesn't stack sigils.
 local function search_enter(seed)
   local search = state.cfg.search
-  if not (search and search.enabled) or typing() then
+  if not (search and search.enabled) or typing() or editing() then
     return
   end
   if seed and seed ~= "" and state.filter.query:sub(1, #seed) ~= seed then
@@ -822,7 +1043,7 @@ end
 -- against the cached tree (no re-fetch — render() re-fits geometry and lets the
 -- provider emit its per-layout content), and keep the cursor on the same node.
 local function switch_layout(layout)
-  if not state or state.cfg.window.layout == layout then
+  if not state or editing() or state.cfg.window.layout == layout then
     return
   end
   if not state.cfg.window.layouts[layout] then
@@ -998,7 +1219,14 @@ function M.open_loading(provider, cfg, origin)
     origin_buf = origin_buf,
     origin_view = origin_view,
     origin_path = vim.api.nvim_buf_get_name(origin_buf),
+    -- On-disk pin store key: provider override (files: tree root) or the origin file.
+    pin_scope = provider.pin_scope and provider.pin_scope(cfg, origin)
+      or vim.api.nvim_buf_get_name(origin_buf),
+    -- Session fold-level key: provider override (files: tree root) or the origin file.
+    fold_scope = provider.fold_scope and provider.fold_scope(cfg, origin)
+      or vim.api.nvim_buf_get_name(origin_buf),
     follow_node = nil,
+    edit = nil,
     filter = { query = "", sel = 1, typing = false },
     pinned = nil,
     pin_num = nil,
@@ -1079,6 +1307,24 @@ function M.populate(token, roots)
   tree.set_expanded_depth(roots, state.fold_level)
 
   refresh_pins() -- load + prune the file's pins before the first render
+
+  -- Focus target: the node the open should land on. A provider with `focus` (files)
+  -- resolves the origin buffer's own file; reveal the path down to it so it's visible
+  -- even under a collapsed fold level. Symbols has no `focus` and instead uses
+  -- follow's find_enclosing below.
+  local focus_target
+  if provider.focus then
+    focus_target = provider.focus(roots, {
+      win = origin.win,
+      pos = origin.pos,
+      buf = state.origin_buf,
+      path = state.origin_path,
+    }, cfg)
+    if focus_target then
+      reveal_ancestors(focus_target)
+    end
+  end
+
   render()
   set_keys(buf, cfg, provider)
   set_layout_keys(buf, cfg)
@@ -1141,9 +1387,14 @@ function M.populate(token, roots)
     })
   end
 
-  local enclosing = tree.find_enclosing(roots, origin.pos[1] - 1, origin.pos[2])
-  if enclosing then
-    move_cursor_to_node(enclosing)
+  -- Land the cursor on the focus target (files: the current file, revealed above),
+  -- else follow's enclosing symbol. find_enclosing indexes the origin buffer via
+  -- node.range, which only buffer-position providers (symbols) have — gate it on
+  -- follow so range-less providers without a focus hit just land on the first row.
+  local landing = focus_target
+    or (follow_enabled and tree.find_enclosing(roots, origin.pos[1] - 1, origin.pos[2]))
+  if landing then
+    move_cursor_to_node(landing)
   else
     local last = vim.api.nvim_buf_line_count(buf)
     vim.api.nvim_win_set_cursor(win, { math.min(2, last), 0 })
