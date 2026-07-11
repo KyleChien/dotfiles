@@ -8,6 +8,18 @@ vim.api.nvim_create_autocmd("FileType", {
   end,
 })
 
+vim.diagnostic.config({
+  signs = {
+    text = {
+      [vim.diagnostic.severity.ERROR] = "󰅚", -- nf-md-close_circle
+      [vim.diagnostic.severity.WARN]  = "󰀪", -- nf-md-alert
+      [vim.diagnostic.severity.INFO]  = "󰋽", -- nf-md-information
+      [vim.diagnostic.severity.HINT]  = "󰌶", -- nf-md-lightbulb
+    },
+  },
+})
+
+
 local opt = vim.opt
 
 opt.winborder = "rounded"
@@ -21,7 +33,6 @@ opt.shiftwidth = 2 -- 2 spaces for indent width
 opt.expandtab = true -- expand tab to spaces
 opt.autoindent = true -- copy indent from current line when starting new one
 opt.confirm = true -- Confirm to save changes before exiting modified buffer
-
 opt.wrap = false
 
 -- search settings
@@ -47,7 +58,7 @@ opt.splitbelow = true -- split horizontal window to the bottom
 
 -- others
 opt.swapfile = false -- turn off swapfile
-opt.colorcolumn = "100"
+-- opt.colorcolumn = "100"
 opt.fillchars = {
 	eob = " ", -- replaces "~" marks with spaces
 }
